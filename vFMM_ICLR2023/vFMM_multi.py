@@ -87,7 +87,7 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
         
     if dataOpt['data'] in ('darcy', 'darcy20', 'darcy20c6', 'darcy15c10', 'darcy20c6_c3'):
         if model_type == 'FMM':
-            model = FMMTransformer(**FMM_paras, normalizer=y_normalizer).to(device)
+            model = FMMTransformer(**FMM_paras).to(device)
         elif model_type == 'Unet':
             model = UNet(1,1,bilinear=True).to(device)
         else: 
