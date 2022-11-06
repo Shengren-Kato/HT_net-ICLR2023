@@ -148,20 +148,7 @@ class SpectralConv2d(nn.Module):
             x_ft[:, :, -self.modes1:, :self.modes2], self.fourier_weight2)
         out_ft = torch.complex(out_ft[..., 0], out_ft[..., 1])
         
-        # Multiply relevant Fourier modes
-#         out_ft = torch.zeros(batch_size, self.out_channels,  x.size(-2), x.size(-1)//2 + 1, dtype=torch.cfloat, device=x.device)
-        
-#         if self.mode_threshold:
-#             # out_ft = waveletShrinkage(out_ft, thr=1e-1, mode='relu') 
-#             out_ft = self.shrink(out_ft)
-#         # the 2d Hermmit symmetric refers to two oppsite directions 
-#         out_ft[:, :, :self.modes1, :self.modes2] = \
-#             self.compl_mul2d(x_ft[:, :, :self.modes1, :self.modes2], self.weights1)
-#         out_ft[:, :, -self.modes1:, :self.modes2] = \
-#             self.compl_mul2d(x_ft[:, :, -self.modes1:, :self.modes2], self.weights2)
-        
-        
-        
+
 
         #Return to physical space
         if out_resolution:
@@ -270,9 +257,7 @@ class SpectralDecoder(nn.Module):
                 x = torch.cat((x, grid), dim=-1)
             else: x = torch.cat((x, self.grid), dim=-1)
 
-        # x = x.permute(0, 3, 1, 2)
-        # if self.padding:
-        #     x = F.pad(x, [0,self.padding, 0,self.padding])
+
         x = self.pre_process(x)
         x1 = self.Spectral_Conv_List[0](x)
         x2 = self.Conv2d_list[0](x)
@@ -295,10 +280,7 @@ class SpectralDecoder(nn.Module):
             else:
                 x = x1 + x2
         x = self.post_process(x)        
-        # if self.padding:
-        #     x = x[..., :self.resolution, :self.resolution]
-        # x = x.permute(0, 2, 3, 1)
-        # x = self.mlp(x)
+
         return x
     
     def get_grid(self, shape, device):
@@ -341,7 +323,6 @@ def window_partition(x, window_size):
         windows: (num_windows*B, window_size, window_size, C)
     """
     B, H, W, C = x.shape
-#     print(x.shape)
     x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
     windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
     return windows
@@ -467,7 +448,7 @@ class WindowAttention(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    r""" Swin Transformer Block.
+    r""" Transformer Block adaptive from Swin.
 
     Args:
         dim (int): Number of input channels.
@@ -636,12 +617,9 @@ class PatchMerging(nn.Module):
             x = self.reduction(x)
         else:
             H, W = self.input_resolution
-#             print(x.shape)
             B = x.shape[0]
             C = x.shape[-1]
-#             print(x.shape)
-#             print(H, W)
-#             assert H_0 == H // 2, "input feature has wrong size"
+
             x = self.reconstruction(x)
             x = x.view(B, H//2, W//2, 2*C)
             New_C = C//2
@@ -665,7 +643,7 @@ class PatchMerging(nn.Module):
         return flops
     
 class PatchUnMerging(nn.Module):
-    r""" Patch Merging Layer.
+    r""" Patch Unmerging Layer.
 
     Args:
         input_resolution (tuple[int]): Resolution of input feature.
@@ -677,8 +655,6 @@ class PatchUnMerging(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-#         self.reduction = nn.Linear(dim//4, 1, bias=False)
-#         self.norm = norm_layer(4 * dim)
 
     def forward(self, x):
         """
@@ -697,11 +673,7 @@ class PatchUnMerging(nn.Module):
         x_target[:, 1::2, 0::2, :] = x[..., New_C:2*New_C]  # B H/2 W/2 C
         x_target[:, 0::2, 1::2, :] = x[..., 2*New_C:3*New_C]  # B H/2 W/2 C
         x_target[:, 1::2, 1::2, :] = x[..., 3*New_C:] # B H/2 W/2 C
-#         x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
-#         x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
 
-#         x = self.norm(x)
-#         x = self.reduction(x)
 
         return x_target
 
@@ -948,9 +920,6 @@ class SwinTransformer(nn.Module):
         self.patchUnmerge = PatchUnMerging(dim=int(embed_dim * 2 ** i_layer), input_resolution=(patches_resolution[0] // (2 ** i_layer),
                                                  patches_resolution[1] // (2 ** i_layer)))
         self.norm = norm_layer(self.num_features//4)
-#         self.avgpool = nn.AdaptiveAvgPool1d(1)
-#         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
-
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -978,10 +947,6 @@ class SwinTransformer(nn.Module):
 
         for layer in self.layers:
             x = layer(x)
-
-#         x = self.norm(x)  # B L C
-#         x = self.avgpool(x.transpose(1, 2))  # B C 1
-#         x = torch.flatten(x, 1)
         return x
 
     def forward(self, x):
