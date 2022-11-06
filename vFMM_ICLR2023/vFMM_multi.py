@@ -787,6 +787,7 @@ if __name__ == "__main__":
     FNO_paras={  
                 "modes": 12,
                 "width": 64,
+                "lift": False,
                 "padding": 5,
                 "mode_threshold": False,
                 "kernel_type": 'c',

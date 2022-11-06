@@ -212,7 +212,7 @@ class SpectralDecoder(nn.Module):
         self.mlp = FeedForward(self.width, mlp_hidden_dim, output_dim, LN=mlp_LN)
         if normalizer:
             self.normalizer = normalizer
-
+        squ = Lambda(lambda x: torch.squeeze(x))
         # pad the domain if input is non-periodic
         if padding:
             padding_trans = Lambda(lambda x: F.pad(x, [0, padding, 0, padding])) 
@@ -221,17 +221,17 @@ class SpectralDecoder(nn.Module):
                 self.pre_process = transforms.Compose([self.fc0, permute_trans, padding_trans, ])
             else: self.pre_process = transforms.Compose([permute_trans, padding_trans, ])
             if normalizer:
-                self.post_process = transforms.Compose([crop_trans, permute_trans2, self.mlp, self.normalizer.decode])
+                self.post_process = transforms.Compose([crop_trans, permute_trans2, self.mlp, squ, self.normalizer.decode])
             else:
-                self.post_process = transforms.Compose([crop_trans, permute_trans2, self.mlp])
+                self.post_process = transforms.Compose([crop_trans, permute_trans2, self.mlp, squ])
         else:
             if lift:  
                 self.pre_process = transforms.Compose([self.fc0, permute_trans])
             else: self.pre_process = permute_trans
             if normalizer:
-                self.post_process = transforms.Compose([permute_trans2, self.mlp, self.normalizer.decode])
+                self.post_process = transforms.Compose([permute_trans2, self.mlp, squ, self.normalizer.decode])
             else:
-                self.post_process = transforms.Compose([permute_trans2, self.mlp,])
+                self.post_process = transforms.Compose([permute_trans2, self.mlp, squ])
         
         self.Spectral_Conv_List = nn.ModuleList([])      
         for _ in range(num_spectral_layers):
@@ -294,8 +294,7 @@ class SpectralDecoder(nn.Module):
                 x = x1 + torch.kron(x2, self.extrapolation)
             else:
                 x = x1 + x2
-        x = self.post_process(x)
-        x = torch.squeeze(x)
+        x = self.post_process(x)        
         # if self.padding:
         #     x = x[..., :self.resolution, :self.resolution]
         # x = x.permute(0, 2, 3, 1)
