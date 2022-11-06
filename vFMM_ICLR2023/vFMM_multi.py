@@ -76,7 +76,7 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
     # training and evaluation
     ################################################################
     FMM_paras['FNO_paras']['resolution'] = y_train.size(1)
-
+    FMM_paras['FNO_paras']['normalizer'] =  y_normalizer
     # if dataOpt['data']=='darcy':
     #     model = FMMTransformer(FNO_paras, img_size=421, patch_size=4, in_chans=1, 
     #                  embed_dim=FNO_paras['width'], depths=[1, 2, 1], num_heads=[1, 1, 1],
