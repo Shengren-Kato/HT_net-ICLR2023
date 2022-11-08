@@ -970,7 +970,7 @@ class FMMTransformer(nn.Module):
 
     """
 
-    def __init__(self, FNO_paras, img_size=224, patch_size=4, in_chans=3, 
+    def __init__(self, Decoder_paras, img_size=224, patch_size=4, in_chans=3, 
                  embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
                  window_size=[7, 7, 7, 7], mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
@@ -1034,7 +1034,7 @@ class FMMTransformer(nn.Module):
         self.norm = norm_layer(self.embed_dim)
 
         self.apply(self._init_weights)
-        self.Decoder = SpectralDecoder(**FNO_paras)
+        self.Decoder = SpectralDecoder(**Decoder_paras)
        
         
     def _init_weights(self, m):

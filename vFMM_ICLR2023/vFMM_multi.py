@@ -84,11 +84,11 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
     ################################################################
     # training and evaluation
     ################################################################
-    FMM_paras['FNO_paras']['resolution'] = y_train.size(1)
-    FMM_paras['FNO_paras']['normalizer'] =  y_normalizer
+    FMM_paras['Decoder_paras']['resolution'] = y_train.size(1)
+    FMM_paras['Decoder_paras']['normalizer'] =  y_normalizer
     # if dataOpt['data']=='darcy':
-    #     model = FMMTransformer(FNO_paras, img_size=421, patch_size=4, in_chans=1, 
-    #                  embed_dim=FNO_paras['width'], depths=[1, 2, 1], num_heads=[1, 1, 1],
+    #     model = FMMTransformer(Decoder_paras, img_size=421, patch_size=4, in_chans=1, 
+    #                  embed_dim=Decoder_paras['width'], depths=[1, 2, 1], num_heads=[1, 1, 1],
     #                  window_size=[9, 4, 4], mlp_ratio=4., qkv_bias=False, qk_scale=None,
     #                  norm_layer=nn.LayerNorm, ape=False, patch_norm=patch_norm,
     #                  use_checkpoint=False, stride=sampling_rate, patch_padding=6, 
@@ -103,16 +103,16 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
             raise NameError('invalid model type')
 
     elif dataOpt['data']=='navier':
-        model = FMMTransformer(FNO_paras, img_size=128, patch_size=3, in_chans=1,
-                     embed_dim=FNO_paras['width'], depths=[1, 1, 1], num_heads=[1, 1, 1],
+        model = FMMTransformer(Decoder_paras, img_size=128, patch_size=3, in_chans=1,
+                     embed_dim=Decoder_paras['width'], depths=[1, 1, 1], num_heads=[1, 1, 1],
                      window_size=[4, 4, 4], mlp_ratio=4., qkv_bias=False, qk_scale=None,
                      norm_layer=nn.LayerNorm, ape=False, patch_norm=patch_norm,
                      use_checkpoint=False, stride=sampling_rate, patch_padding=1,
                       normalizer=None).to(device)
         
     else:
-        model = FMMTransformer(FNO_paras, img_size=1023, patch_size=4, in_chans=1,
-                     embed_dim=FNO_paras['width'], depths=[1, 1, 1], num_heads=[1, 1, 1],
+        model = FMMTransformer(Decoder_paras, img_size=1023, patch_size=4, in_chans=1,
+                     embed_dim=Decoder_paras['width'], depths=[1, 1, 1], num_heads=[1, 1, 1],
                      window_size=[8, 8, 8], mlp_ratio=4., qkv_bias=False, qk_scale=None,
                      norm_layer=nn.LayerNorm, ape=False, patch_norm=patch_norm,
                      use_checkpoint=False, stride=sampling_rate, 
@@ -319,7 +319,7 @@ tqdm_disable=True, parallel=False, validate=False, checkpoint_dir=None):
      }
     
 
-    FNO_paras={"modes": opt['modes'],
+    Decoder_paras={"modes": opt['modes'],
            "width": opt['width'],
            "padding": opt['padding'],        
            "kernel_type": opt['kernel_type'],
@@ -331,14 +331,14 @@ tqdm_disable=True, parallel=False, validate=False, checkpoint_dir=None):
     FMM_paras = {    
             'img_size': opt['img_size'], 'patch_size': opt['patch_size'], 
             'in_chans':opt['in_chans'], 
-            'embed_dim': FNO_paras['width'], 'depths': opt['depths'], 
+            'embed_dim': Decoder_paras['width'], 'depths': opt['depths'], 
             'num_heads':opt['num_heads'],
             'window_size': opt['window_size'], 'mlp_ratio': opt['mlp_ratio'],
             'qkv_bias': opt['qkv_bias'], 'qk_scale': opt['qk_scale'],
             'norm_layer': opt['norm_layer'], 'patch_norm': opt['patch_norm'],
             'stride': dataOpt['sampling_rate'],
             'patch_padding': opt['patch_padding'], 
-            'FNO_paras': FNO_paras,
+            'Decoder_paras': Decoder_paras,
             }
 
     optimizerScheduler_args = {
@@ -379,7 +379,7 @@ tqdm_disable=True, parallel=False, validate=False, checkpoint_dir=None):
     ################################################################
     # training and evaluation
     ################################################################
-    FMM_paras['FNO_paras']['resolution'] = y_train.size(1)
+    FMM_paras['Decoder_paras']['resolution'] = y_train.size(1)
 
     model = FMMTransformer(**FMM_paras, normalizer=y_normalizer).to(device)
     
@@ -524,7 +524,7 @@ mlp_hidden_dim=128, num_spectral_layers=4, activation='gelu', add_pos=True, fina
     ################################################################
     # configs
     ################################################################
-    FNO_paras={"modes": modes,
+    Decoder_paras={"modes": modes,
            "width": width,
            "padding": padding,
            "mode_threshold": mode_threshold,
@@ -580,10 +580,10 @@ mlp_hidden_dim=128, num_spectral_layers=4, activation='gelu', add_pos=True, fina
     ################################################################
     # training and evaluation
     ################################################################
-    FNO_paras['resolution'] = s
+    Decoder_paras['resolution'] = s
     if data=='darcy':
-        model = FMMTransformer(FNO_paras, img_size=421, patch_size=4, in_chans=1, num_classes=2,
-                     embed_dim=FNO_paras['width'], depths=[1, 2, 1], num_heads=[1, 1, 1],
+        model = FMMTransformer(Decoder_paras, img_size=421, patch_size=4, in_chans=1, num_classes=2,
+                     embed_dim=Decoder_paras['width'], depths=[1, 2, 1], num_heads=[1, 1, 1],
                      window_size=[9, 4, 4], mlp_ratio=4., qkv_bias=False, qk_scale=None,
                      drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
                      norm_layer=nn.LayerNorm, ape=False, patch_norm=None,
@@ -591,8 +591,8 @@ mlp_hidden_dim=128, num_spectral_layers=4, activation='gelu', add_pos=True, fina
         
     else:
         # data in ('darcy20', 'darcy20c6', 'darcy15c10', 'darcy20c6_c3'):
-        model = FMMTransformer(FNO_paras, img_size=512, patch_size=4, in_chans=1, num_classes=2,
-                     embed_dim=FNO_paras['width'], depths=[1, 1, 1], num_heads=[1, 1, 1],
+        model = FMMTransformer(Decoder_paras, img_size=512, patch_size=4, in_chans=1, num_classes=2,
+                     embed_dim=Decoder_paras['width'], depths=[1, 1, 1], num_heads=[1, 1, 1],
                      window_size=[4, 4, 4], mlp_ratio=4., qkv_bias=False, qk_scale=None,
                      drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
                      norm_layer=nn.LayerNorm, ape=False, patch_norm=None,
@@ -644,7 +644,7 @@ if __name__ == "__main__":
     # dataOpt['dataSize'] = {'train': 1280, 'test': 112, 'val':112}
     # dataOpt['batch_size'] = 8
 
-    # FNO_paras={  
+    # Decoder_paras={  
     #             "modes": 12,
     #             "width": 64,
     #             "padding": 5,
@@ -688,27 +688,27 @@ if __name__ == "__main__":
     # if dataOpt['data']=='darcy':
     #     FMM_paras = {    
     #                 'img_size': 421, 'patch_size': 4, 'in_chans':1, 
-    #                 'embed_dim': FNO_paras['width'], 'depths': [1, 2, 1], 
+    #                 'embed_dim': Decoder_paras['width'], 'depths': [1, 2, 1], 
     #                 'num_heads':[1, 1, 1],
     #                 'window_size': [9, 4, 4], 'mlp_ratio': 4.,
     #                 'qkv_bias': False, 'qk_scale': None,
     #                 'norm_layer': nn.LayerNorm, 'patch_norm': False,
     #                 'stride': dataOpt['sampling_rate'],
     #                 'patch_padding': 6, 
-    #                 'FNO_paras': FNO_paras,
+    #                 'Decoder_paras': Decoder_paras,
     #                  }
         
     # elif dataOpt['data'] in ('darcy20', 'darcy20c6', 'darcy15c10', 'darcy20c6_c3'):
     #     FMM_paras = {    
     #                 'img_size': 512, 'patch_size': 3, 'in_chans':1, 
-    #                 'embed_dim': FNO_paras['width'], 'depths': [1, 1, 1], 
+    #                 'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
     #                 'num_heads':[1, 1, 1],
     #                 'window_size': [4, 4, 4], 'mlp_ratio': 4.,
     #                 'qkv_bias': False, 'qk_scale': None,
     #                 'norm_layer': nn.LayerNorm, 'patch_norm': False,
     #                 'stride': dataOpt['sampling_rate'],
     #                 'patch_padding': 1, 
-    #                 'FNO_paras': FNO_paras,
+    #                 'Decoder_paras': Decoder_paras,
     #                  }
      
 
@@ -716,14 +716,14 @@ if __name__ == "__main__":
     # else:
     #     FMM_paras = {    
     #                 'img_size': 1023, 'patch_size': 4, 'in_chans':1, 
-    #                 'embed_dim': FNO_paras['width'], 'depths': [1, 1, 1], 
+    #                 'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
     #                 'num_heads':[1, 1, 1],
     #                 'window_size': [8, 8, 8], 'mlp_ratio': 4.,
     #                 'qkv_bias': False, 'qk_scale': None,
     #                 'norm_layer': nn.LayerNorm, 'patch_norm': False,
     #                 'stride': dataOpt['sampling_rate'],
     #                 'patch_padding': 1, 
-    #                 'FNO_paras': FNO_paras,
+    #                 'Decoder_paras': Decoder_paras,
     #                  }
       
 
@@ -770,7 +770,7 @@ if __name__ == "__main__":
     dataOpt['loss_type']='h1'
    
 
-    # FNO_paras={  
+    # Decoder_paras={  
     #             "modes": 12,
     #             "width": 64,
     #             "padding": 5,
@@ -784,7 +784,7 @@ if __name__ == "__main__":
     #             }
 
 # extrapolate 
-    FNO_paras={  
+    Decoder_paras={  
                 "modes": 12,
                 "width": 64,
                 "lift": False,
@@ -802,49 +802,49 @@ if __name__ == "__main__":
 
     # FMM_paras = {    
     #             'img_size': 512, 'patch_size': 4, 'in_chans':1, 
-    #             'embed_dim': FNO_paras['width'], 'depths': [1, 1, 1], 
+    #             'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
     #             'num_heads':[1, 1, 1],
     #             'window_size': [4, 4, 4], 'mlp_ratio': 4.,
     #             'qkv_bias': False, 'qk_scale': None,
     #             'norm_layer': nn.LayerNorm, 'patch_norm': True,
     #             'stride': dataOpt['sampling_rate'], 'patch_padding': 1, 
-    #             'FNO_paras': FNO_paras,
+    #             'Decoder_paras': Decoder_paras,
     #             }
 
     # sampling rate 1
     # FMM_paras = {    
     #         'img_size': 512, 'patch_size': 3, 'in_chans':1, 
-    #         'embed_dim': FNO_paras['width'], 'depths': [1, 1, 1], 
+    #         'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
     #         'num_heads':[1, 1, 1],
     #         'window_size': [4, 4, 4], 'mlp_ratio': 4.,
     #         'qkv_bias': False, 'qk_scale': None,
     #         'norm_layer': nn.LayerNorm, 'patch_norm': False,
     #         'stride': dataOpt['sampling_rate'],
     #         'patch_padding': 1, 
-    #         'FNO_paras': FNO_paras,
+    #         'Decoder_paras': Decoder_paras,
     #         }
     # FMM_paras = {    
     #         'img_size': 1023, 'patch_size': 4, 'in_chans':1, 
-    #         'embed_dim': FNO_paras['width'], 'depths': [1, 1, 1], 
+    #         'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
     #         'num_heads':[1, 1, 1],
     #         'window_size': [8, 8, 8], 'mlp_ratio': 4.,
     #         'qkv_bias': False, 'qk_scale': None,
     #         'norm_layer': nn.LayerNorm, 'patch_norm': True,
     #         'stride': dataOpt['sampling_rate'],
     #         'patch_padding': 2, 
-    #         'FNO_paras': FNO_paras,
+    #         'Decoder_paras': Decoder_paras,
     #         }
 
     # darcy's
     FMM_paras = {    
                 'img_size': 421, 'patch_size': 6, 'in_chans':1, 
-                'embed_dim': FNO_paras['width'], 'depths': [1, 2, 1], 
+                'embed_dim': Decoder_paras['width'], 'depths': [1, 2, 1], 
                 'num_heads':[1, 1, 1],
                 'window_size': [4, 4, 4], 'mlp_ratio': 4.,
                 'qkv_bias': False, 'qk_scale': None,
                 'norm_layer': nn.LayerNorm, 'patch_norm': None,
                 'stride': dataOpt['sampling_rate'], 'patch_padding': 0, 
-                'FNO_paras': FNO_paras,
+                'Decoder_paras': Decoder_paras,
                 }
 
 
