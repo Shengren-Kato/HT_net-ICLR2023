@@ -32,7 +32,7 @@ The reference [requirements.txt](https://github.com/Shengren-Kato/HT_net-ICLR202
 # Examples
 To verify experiment darcy smooth in Section4.2, please fill in the data path of <br>`piececonst_r421_N1024_smooth1.mat` and <br>`piececonst_r421_N1024_smooth2.mat` on line 373 and 375 in [utilities3.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/utilities3.py).
 
-To verify experiment darcy rough in Section4.2, please fill in the data path of <br>`darcy_alpha2_tau5_512_train.mat`, <br>`darcy_alpha2_tau5_512_test.mat` and <br>`darcy_alpha2_tau18_c3_512_test.mat` on line 380, 382 and 384 in [utilities3.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/utilities3.py).
+To verify experiment darcy rough in Section4.2, please fill in the data path of <br>`darcy_rough_train.mat`, <br>`darcy_rough_val.mat` ,<br>`darcy_rough_test.mat`and <br>`darcy_alpha2_tau18_c3_512_test.mat` on line 380, 382 and 384 in [utilities3.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/utilities3.py).
 
 Run the [vFMM_multi.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/vFMM_multi.py) to get the result of experimet darcy rough with reslution = 256.
 
