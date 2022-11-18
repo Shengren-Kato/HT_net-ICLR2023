@@ -2,15 +2,14 @@ import torch
 import numpy as np
 import scipy.io
 import h5py
+from functools import reduce 
+import operator
 import torch.nn as nn
 import os
-import operator
-from functools import reduce
-from functools import partial
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.ticker import LinearLocator
-from datetime import date
+from datetime import date, datetime
 import plotly.express as px
 import plotly.figure_factory as ff
 import plotly.graph_objects as go
@@ -78,6 +77,39 @@ class MatReader(object):
     def set_float(self, to_float):
         self.to_float = to_float
 
+def load_from_h5(h5_all_data_path):
+    """Load all data from h5."""
+
+    print(f'Load simulation data from h5 format.')
+
+    # Init h5_keys
+    h5_keys = ['realization', 'perm_3d', 'poil_3d', 'soil_3d', 'swat_3d', 'timeSteps']
+
+    # If h5 file already save all the numpy array
+  
+    data = {}
+
+    # Get all the numpy array first
+    with h5py.File(h5_all_data_path, 'r') as hf:
+        for key in h5_keys:
+            if key in hf.keys():
+                val = hf.get(name=key)[:]
+                data.update({key: val})
+                print(f'Complete loading {key}.')
+
+    # - dimension parameters
+    n_samples, n_time_steps, n_grid_x, n_grid_y, n_grid_z = data['poil_3d'].shape
+    data.update({
+        # - dimension parameters
+        'n_samples': n_samples,
+        'n_time_steps': n_time_steps,
+        'n_grid_x': n_grid_x,
+        'n_grid_y': n_grid_y,
+        'n_grid_z': n_grid_z,
+    })
+
+    return data
+
 # normalization, pointwise gaussian
 class UnitGaussianNormalizer(nn.Module):
     def __init__(self, x, eps=0.00001):
@@ -85,7 +117,6 @@ class UnitGaussianNormalizer(nn.Module):
 
         # x could be in shape of ntrain*n or ntrain*T*n or ntrain*n*T
         self.register_buffer('mean', torch.mean(x, 0))
-        self.register_buffer('std', torch.std(x, 0))
         self.register_buffer('std', torch.std(x, 0))
         self.eps = eps
     
@@ -110,7 +141,7 @@ class UnitGaussianNormalizer(nn.Module):
         return x
 
 # normalization, Gaussian
-class GaussianNormalizer(object):
+class GaussianNormalizer(nn.Module):
     def __init__(self, x, eps=0.00001):
         super(GaussianNormalizer, self).__init__()
 
@@ -126,13 +157,7 @@ class GaussianNormalizer(object):
         x = (x * (self.std + self.eps)) + self.mean
         return x
 
-    def cuda(self):
-        self.mean = self.mean.cuda()
-        self.std = self.std.cuda()
-
-    def cpu(self):
-        self.mean = self.mean.cpu()
-        self.std = self.std.cpu()
+  
 
 class GaussianImageNormalizer(object):
     def __init__(self, x, eps=0.00001):
@@ -216,8 +241,8 @@ class LpLoss(object):
     def rel(self, x, y):
         num_examples = x.size()[0]
 
-        diff_norms = torch.norm(x.view(num_examples,-1) - y.view(num_examples,-1), self.p, 1)
-        y_norms = torch.norm(y.view(num_examples,-1), self.p, 1)
+        diff_norms = torch.norm(x.view(num_examples,-1) - y.reshape(num_examples,-1), self.p, 1)
+        y_norms = torch.norm(y.reshape(num_examples,-1), self.p, 1)
 
         if self.reduction:
             if self.size_average:
@@ -233,6 +258,40 @@ class LpLoss(object):
     def __call__(self, x, y):
         
         return self.rel(x, y)
+
+class RMSELoss(nn.MSELoss):
+    def __init__(self, eps=1e-6, reduction='mean'):
+        super().__init__(reduction=reduction)
+        self.eps = eps
+        
+    def forward(self,yhat,y):
+        loss = torch.sqrt(super().forward(yhat,y) + self.eps)
+        return loss
+
+class HSloss_d(nn.MSELoss):
+    def __init__(self, reduction='mean'):
+        super().__init__(reduction=reduction)
+    
+    def forward(self, x, y):
+        temp = x - y
+        z0, z1 = torch.gradient(temp, dim=(-2, -1), spacing=1/x.size(-1)) 
+        agg = 10*temp**2 + z0**2 + z1**2
+        loss = torch.mean(torch.sqrt(torch.sum(agg, dim=(-2, -1))))  
+        return loss, torch.zeros(1), torch.zeros(x.size(0)), torch.zeros(x.size(0))
+
+class HSloss_d_2(nn.MSELoss):
+    def __init__(self, reduction='mean'):
+        super().__init__(reduction=reduction)
+    
+    def forward(self, x, y):
+        temp = x - y
+        z0, z1 = torch.gradient(temp, dim=(-2, -1), spacing=1/x.size(-1)) 
+        agg = 10*temp**2 + z0**2 + z1**2
+        yg1, yg2 = torch.gradient(y, dim=(-2, -1), spacing=1/x.size(-1)) 
+        aggy = 10*y**2 + yg1**2 + yg2**2
+        loss = torch.mean(torch.sqrt(torch.sum(agg, dim=(-2, -1)))/torch.sqrt(torch.sum(aggy, dim=(-2, -1))))  
+        return loss, torch.zeros(1), torch.zeros(x.size(0)), torch.zeros(x.size(0))
+        
 
 # Sobolev norm (HS norm)
 # where we also compare the numerical derivatives between the output and target
@@ -299,7 +358,7 @@ class HsLoss(object):
         y = torch.fft.fftn(y, dim=[1, 2], norm='ortho')
 
         if balanced==False:
-            weight = 1
+            weight = 4
             if k >= 1:
                 weight += a[0]**2 * (self.k_x**2 + self.k_y**2)
             if k >= 2:
@@ -370,51 +429,99 @@ def getPath(data, flag):
     
     if data=='darcy':
         if flag=='train':
-            PATH = 'Please fill in your datapath'
+            PATH = os.path.join('/ibex/ai/home/liux0t/Xinliang/FMM/','data/piececonst_r421_N1024_smooth1.mat')
         else:
-            PATH = 'Please fill in your datapath'
+            PATH = os.path.join('/ibex/ai/home/liux0t/Xinliang/FMM/', 'data/piececonst_r421_N1024_smooth2.mat')
     elif data=='darcy20':
-        TRAIN_PATH = 'Please fill in your datapath'
-        TEST_PATH = 'Please fill in your datapath'
+        # for ray tune
+        TRAIN_PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/darcy_alpha2_tau5_512_train.mat'
+        TEST_PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/darcy_alpha2_tau5_512_test.mat'
     elif data=='darcy20c6':
+        # for ray tune
         if flag=='train':
-            PATH = 'Please fill in your datapath'
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/darcy_alpha2_tau5_512_train.mat' 
         elif flag=='test':
-            PATH = 'Please fill in your datapath'
-        else:
-            PATH = 'Please fill in your datapath'
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/darcy_alpha2_tau5_512_test.mat'
+        elif flag=='val':
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/darcy_alpha2_tau5_512_train.mat' 
+        elif flag=='gel':
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/darcy_alpha2_tau18_c3_512_test.mat'
+        else: raise NameError('invalid flag name')
+        
     elif data=='darcy20c6_c3':
-        TRAIN_PATH = 'Please fill in your datapath'
-        TEST_PATH = 'Please fill in your datapath'
+        TRAIN_PATH = os.path.join(os.path.abspath(''), 'darcy_alpha2_tau5_512_train.mat')
+        TEST_PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/darcy_alpha2_tau18_c3_512_test.mat'
     elif data=='darcy15c10':
-        TRAIN_PATH = 'Please fill in your datapath'
-        TEST_PATH = 'Please fill in your datapath'
-
+        TRAIN_PATH = os.path.join(os.path.abspath(''), 'darcy_alpha2_tau15_c10_512_train.mat')
+        TEST_PATH = os.path.join(os.path.abspath(''), 'darcy_alpha2_tau15_c10_512_test.mat')
+    elif data=='a3f2':
+        TRAIN_PATH = os.path.join(os.path.abspath(''), 'data/mul_res1023_a3f2_train.mat')
+        TEST_PATH = os.path.join(os.path.abspath(''), 'data/mul_res1023_a3f2_test.mat')
+    elif data=='a4f3':
+        if flag=='train':
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/data/mul_res1023_a4f3_train.mat'
+        else:
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/data/mul_res1023_a4f3_test.mat'
+    elif data=='a4f1':
+        if flag=='train':
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/data/mul_tri_train.mat'
+        else:
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/data/mul_tri_test.mat'
+    elif data=='checker':
+        TRAIN_PATH = '/home/xubo/multiscale-attention/data/mul_res1023_a7f1m32_train.mat'
+        TEST_PATH = '/home/xubo/multiscale-attention/data/mul_res1023_a7f1m32_test.mat'
+    elif data=='checkerm4':
+        TRAIN_PATH = '/home/xubo/multiscale-attention/data/mul_res1023_a7f1m4_train.mat'
+        TEST_PATH = '/home/xubo/multiscale-attention/data/mul_res1023_a7f1m4_test.mat'
+    elif data=='darcyF':
+        TRAIN_PATH = os.path.join(os.path.abspath(''), 'darcy_alpha2_tau18_512_F_train.mat')
+        TEST_PATH = os.path.join(os.path.abspath(''), 'darcy_alpha2_tau18_512_F_test.mat')    
+    elif data=='darcyF2':
+        TRAIN_PATH = os.path.join(os.path.abspath(''), 'darcy_alpha2_tau9_512_F_train.mat')
+        TEST_PATH = os.path.join(os.path.abspath(''), 'darcy_alpha2_tau9_512_F_test.mat')    
+    elif data=='burgers':
+        TRAIN_PATH = os.path.join(os.path.abspath(''), 'burgers_data_R10.mat')
     elif data=='navier':
-        TRAIN_PATH = 'Please fill in your datapath'
-        TEST_PATH = 'Please fill in your datapath'
+        TRAIN_PATH = '/home/liux0t/FMM/data/ns_V1e-4_N10000_T30.mat'
+        TEST_PATH = '/home/liux0t/FMM/data/ns_V1e-4_N10000_T30.mat'
+    elif data=='helmholtz':
+        if flag=='train':
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/data/Hel_train.mat'
+        else:
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/data/Hel_test.mat'
+    elif data=='helm':
+        if flag=='x':
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/data/Helmholtz_inputs.npy'
+        else:
+            PATH = '/ibex/ai/home/liux0t/Xinliang/FMM/data/Helmholtz_outputs.npy'
     else: raise NameError('invalid data name')
     
     return PATH
    
 
 def getDarcyDataSet(dataOpt, flag, 
-return_normalizer=False, normalizer=None):
+return_normalizer=False, normalizer_type='PGN', normalizer=None):
     PATH = getPath(dataOpt['data'], flag)
     r = dataOpt['sampling_rate']
-    nSample = dataOpt['dataSize'][flag]
+    sample_idx = dataOpt['dataSize'][flag]
     GN = dataOpt['GN']
+    if 'normalizer_type' in dataOpt:
+        normalizer_type = dataOpt['normalizer_type']
 
     reader = MatReader(PATH)
     if dataOpt['sample_x']:
-        x = reader.read_field('coeff')[:nSample,::r,::r]
+        x = reader.read_field('coeff')[sample_idx,::r,::r]
     else:
-        x = reader.read_field('coeff')[:nSample,...]
-    y = reader.read_field('sol')[:nSample,::r,::r]
+        x = reader.read_field('coeff')[sample_idx,...]
+    y = reader.read_field('sol')[sample_idx,::r,::r]
     
     if return_normalizer:
-        x_normalizer = UnitGaussianNormalizer(x)
-        y_normalizer = UnitGaussianNormalizer(y)
+        if normalizer_type=='PGN':
+            x_normalizer = UnitGaussianNormalizer(x)
+            y_normalizer = UnitGaussianNormalizer(y)
+        else:
+            x_normalizer = GaussianNormalizer(x)
+            y_normalizer = GaussianNormalizer(y)
         if GN:        
             x = x_normalizer.encode(x)
             return x, y, x_normalizer, y_normalizer
@@ -428,6 +535,44 @@ return_normalizer=False, normalizer=None):
                 return normalizer.encode(x), y
         else:
             return x, y
+
+def getHelmDataset(dataOpt, return_normalizer=True, normalizer_type='PGN'):
+
+    PATH_X = getPath(dataOpt['data'], 'x')
+    PATH_Y = getPath(dataOpt['data'], 'y')
+    x = np.load(PATH_X)
+    x = np.transpose(x, axes=[2, 0, 1])
+    x = torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32))
+    y = np.load(PATH_Y)
+    y = np.transpose(y, axes=[2, 0, 1])
+    y = torch.from_numpy(np.ascontiguousarray(y, dtype=np.float32))
+
+    GN = dataOpt['GN']
+    if 'normalizer_type' in dataOpt:
+        normalizer_type = dataOpt['normalizer_type']
+    
+    r = dataOpt['sampling_rate']
+    train_idx = dataOpt['dataSize']['train']
+    test_idx = dataOpt['dataSize']['test']
+    x_train = x[train_idx,...]
+    x_test = x[test_idx,...]
+    y_train = y[train_idx,...]
+    y_test = y[test_idx,...]
+
+    if return_normalizer:
+        if normalizer_type=='PGN':
+            x_normalizer = UnitGaussianNormalizer(x_train)
+            y_normalizer = UnitGaussianNormalizer(y_train)
+        else:
+            x_normalizer = GaussianNormalizer(x_train)
+            y_normalizer = GaussianNormalizer(y_train)
+        if GN:        
+            x_train = x_normalizer.encode(x_train)
+            x_test = x_normalizer.encode(x_test)
+    
+        return x_train, y_train, x_test, y_test, x_normalizer, y_normalizer
+
+    return x_train, y_train, x_test, y_test
         
 def getNavierDataSet(dataPath, r, ntrain, ntest, T_in, T, device, T_out=None, return_normalizer=False, GN=False, normalizer=None, full_train=False):
 
@@ -506,6 +651,30 @@ def getNavierDataSet2(opt, device, return_normalizer=False, GN=False, normalizer
         else:
             return train_a, train_u, test_a, test_u
 
+def getMultiPhaseDataSet(opt, device, return_normalizer=False, GN=False, normalizer=None):
+    dataPath, r, ntrain, ntest, T_in, T_out, T = opt['path'], opt['sampling'], opt['ntrain'], opt['ntest'], opt['T_in'], opt['T_out'], opt['T']
+    data = load_from_h5(h5_all_data_path='/ibex/ai/home/liux0t/Xinliang/FMM/data/6_wells_sim_data_1000_cases.h5')
+    data['perm_3d'] = np.tile(data['perm_3d'], (1, 1, 1, 24))[..., np.newaxis]
+    data = np.concatenate((data['swat_3d'].transpose((0, 2, 3, 1, 4)), data['perm_3d']), axis=-1)
+    data = data.reshape((1000, 50, 50, -1))
+    data = np.ascontiguousarray(data)
+    temp = torch.from_numpy(data).to(torch.float32).to(device)
+    if opt['full_train']:
+        train_a = temp[:ntrain,::r,::r,:2*(T_in+T)]
+    else:
+        train_a = temp[:ntrain,::r,::r,:2*T_in]
+    train_u = temp[:ntrain,::r,::r,2*T_out:2*(T+T_out):2]
+
+
+    test_a = temp[-ntest:,::r,::r,:2*T_in]
+    test_u = temp[-ntest:,::r,::r,2*T_out:2*(T+T_out):2]
+
+    print(train_u.shape)
+    print(test_u.shape)
+    assert (opt['r'] == train_u.shape[-2])
+    return train_a, train_u, test_a, test_u
+
+
 def getOptimizerScheduler(parameters, epochs, optimizer_type='adam', lr=0.001,
  weight_decay=1e-4, final_div_factor=1e1, div_factor=1e1):
     if optimizer_type == 'sgd':
@@ -542,9 +711,13 @@ def getNavierDataLoader(dataPath, r, ntrain, ntest, T_in, T, batch_size, device,
         test_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(test_a, test_u), batch_size=batch_size, shuffle=False)
     return train_loader, test_loader
 
-def getSavePath(data, model_name):
-    
-    MODEL_PATH = os.path.join(os.path.abspath(''), 'model/' + model_name + data + str(date.today()) + '.log')
+def getSavePath(data, model_name, flag='log'):
+    if flag=='log':
+        MODEL_PATH = os.path.join(os.path.abspath(''), 'model/' + model_name + data + str(datetime.now()) + '.log')
+    elif flag=='para':
+        MODEL_PATH = os.path.join(os.path.abspath(''), 'model/' + model_name + data + str(datetime.now()) + '.pt')
+    else:
+        raise NameError('invalid path flag')
     return MODEL_PATH
 
 def save_pickle(var, save_path):
@@ -633,5 +806,4 @@ def showcontour(z, **kwargs):
     else:
         fig.update_layout(margin=dict(l=0, r=0, t=0, b=0),
                           **kwargs)
-    fig.show()
     return fig

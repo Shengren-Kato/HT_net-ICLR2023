@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 
 from unet_model import UNet
-from models import FMMTransformer
+from models import FMMTransformer, SpectralDecoder
 
 import os, logging, copy
 import numpy as np
@@ -19,8 +19,7 @@ from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 
-torch.manual_seed(0)
-np.random.seed(0)
+
 torch.set_printoptions(threshold=100000)
       
 
@@ -28,7 +27,7 @@ torch.set_printoptions(threshold=100000)
 def objective(dataOpt, FMM_paras, optimizerScheduler_args,
               show_conv=False, tqdm_disable=True, 
               log_if=False, parallel=False, 
-              validate=False, model_type='FMM', 
+              validate=False, generalization=False, model_type='FMM', 
               model_save=False, extrapolate=False):
     
     ################################################################
@@ -37,17 +36,19 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
 
     print(os.path.basename(__file__))
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    MODEL_PATH = getSavePath(dataOpt['data'], 'vFMM-')
-    MODEL_PATH_PARA = getSavePath(dataOpt['data'], 'vFMM-', flag='para')
+    MODEL_PATH = getSavePath(dataOpt['data'], model_type)
+    MODEL_PATH_PARA = getSavePath(dataOpt['data'], model_type, flag='para')
     logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(filename)s %(levelname)s %(message)s',
                     datefmt='%a %d %b %Y %H:%M:%S',
                     filename=MODEL_PATH,
                     filemode='w')
     logging.getLogger().addHandler(logging.StreamHandler())
-    logging.info(FMM_paras)
-    logging.info(dataOpt)
-    logging.info(optimizerScheduler_args)
+    logging.info("channel 80 win4 level3")
+    logging.info(f"FMM_paras={FMM_paras}")
+    logging.info(f"dataOpt={dataOpt}")
+    logging.info(f"optimizerScheduler_args={optimizerScheduler_args}")
+  
 
 
     
@@ -58,47 +59,58 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
     
     x_train, y_train, x_normalizer, y_normalizer = getDarcyDataSet(dataOpt, flag='train', return_normalizer=True)
     x_test, y_test = getDarcyDataSet(dataOpt, flag='test', return_normalizer=False, normalizer=x_normalizer)
-    if validate:
+    # if validate:
         # _, VAL_PATH = getPath('darcy20c6_c3')
-        x_val, y_val = getDarcyDataSet(dataOpt, flag='val', return_normalizer=False, normalizer=x_normalizer)
+    x_val, y_val = getDarcyDataSet(dataOpt, flag='val', return_normalizer=False, normalizer=x_normalizer)
+    if generalization:
+        x_gel, y_gel = getDarcyDataSet(dataOpt, flag='gel', return_normalizer=False, normalizer=x_normalizer)
+
     if extrapolate:
         dataOpt2 = copy.deepcopy(dataOpt)
         dataOpt2['sampling_rate'] //= 2
         _, y_test_extra = getDarcyDataSet(dataOpt2, flag='test', return_normalizer=False, normalizer=x_normalizer)
     
-    # just for transformer
-    
-    x_train = x_train[:, np.newaxis, ...]
-    x_test = x_test[:, np.newaxis, ...]
-    if validate:
-        x_val = x_val[:, np.newaxis, ...]   
+ 
+
+    if model_type in ('FMM', 'Unet'):
+        x_train = x_train[:, np.newaxis, ...]
+        x_test = x_test[:, np.newaxis, ...]
+        x_val = x_val[:, np.newaxis, ...]  
+        if generalization:
+            x_gel = x_gel[:, np.newaxis, ...] 
+    else:
+        x_train = x_train[:, ..., np.newaxis]
+        x_test = x_test[:, ..., np.newaxis]
+        x_val = x_val[:, ..., np.newaxis] 
+        if generalization:
+            x_gel = x_gel[:, ..., np.newaxis]  
+
     
     
     train_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(x_train.contiguous().to(device), y_train.contiguous().to(device)), batch_size=dataOpt['batch_size'], shuffle=True)
     test_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(x_test.contiguous().to(device), y_test.contiguous().to(device)), batch_size=dataOpt['batch_size'], shuffle=False)
+    val_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(x_val.contiguous().to(device), y_val.contiguous().to(device)), batch_size=dataOpt['batch_size'], shuffle=False)
+
     if extrapolate:
         test_extra_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(x_test.contiguous().to(device), y_test_extra.contiguous().to(device)), batch_size=dataOpt['batch_size'], shuffle=False)
-    if validate:
-        val_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(x_val.contiguous().to(device), y_val.contiguous().to(device)), batch_size=dataOpt['batch_size'], shuffle=False)
+
+    if generalization:
+        gel_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(x_gel.contiguous().to(device), y_gel.contiguous().to(device)), batch_size=dataOpt['batch_size'], shuffle=False)
   
     ################################################################
     # training and evaluation
     ################################################################
     FMM_paras['Decoder_paras']['resolution'] = y_train.size(1)
     FMM_paras['Decoder_paras']['normalizer'] =  y_normalizer
-    # if dataOpt['data']=='darcy':
-    #     model = FMMTransformer(Decoder_paras, img_size=421, patch_size=4, in_chans=1, 
-    #                  embed_dim=Decoder_paras['width'], depths=[1, 2, 1], num_heads=[1, 1, 1],
-    #                  window_size=[9, 4, 4], mlp_ratio=4., qkv_bias=False, qk_scale=None,
-    #                  norm_layer=nn.LayerNorm, ape=False, patch_norm=patch_norm,
-    #                  use_checkpoint=False, stride=sampling_rate, patch_padding=6, 
-    #                  normalizer=y_normalizer).to(device)
+  
         
     if dataOpt['data'] in ('darcy', 'darcy20', 'darcy20c6', 'darcy15c10', 'darcy20c6_c3', 'helmholtz','a4f1'):
         if model_type == 'FMM':
             model = FMMTransformer(**FMM_paras).to(device)
         elif model_type == 'Unet':
             model = UNet(1,1,bilinear=True).to(device)
+        elif model_type =='FNO':
+            model = SpectralDecoder(**FMM_paras['Decoder_paras'])
         else: 
             raise NameError('invalid model type')
 
@@ -126,9 +138,9 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
     
     optimizer, scheduler = getOptimizerScheduler(model.parameters(), **optimizerScheduler_args)
     
-    # h1loss = HsLoss(d=2, p=2, k=1, size_average=False, res=y_train.size(1), a=[2.,])
-    # h1loss.cuda(device)
-    h1loss = HSloss_d()
+    h1loss = HsLoss(d=2, p=2, k=1, size_average=False, res=y_train.size(1), a=dataOpt['loss_weight'])
+    h1loss.cuda(device)
+    # h1loss = HSloss_d()
     l2loss = LpLoss(size_average=False)  
     # l2loss_abs = LpLoss(size_average=False, relative=False)  
     ############################
@@ -159,9 +171,9 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
             train_f_dist += sum(torch.squeeze(torch.abs(f_l2x-f_l2y))).cpu()
 
         
-        train_l2/= dataOpt['dataSize']['train']
-        train_h1/= dataOpt['dataSize']['train']
-        train_f_dist/= dataOpt['dataSize']['train']
+        train_l2/= len(dataOpt['dataSize']['train'])
+        train_h1/= len(dataOpt['dataSize']['train'])
+        train_f_dist/= len(dataOpt['dataSize']['train'])
         lr = optimizer.param_groups[0]['lr']
         scheduler.step()
         
@@ -180,8 +192,8 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
                 test_h1 += h1loss(out, y)[0].item()
                 # logging.info(l2loss(out, y))
                 # logging.info(h1loss(out, y)[1])
-        test_l2/= dataOpt['dataSize']['test']
-        test_h1/= dataOpt['dataSize']['test']           
+        test_l2/= len(dataOpt['dataSize']['test'])
+        test_h1/= len(dataOpt['dataSize']['test'] )          
         
 
         return  test_l2, test_h1
@@ -198,8 +210,8 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
                 test_extra_h1 += h1loss(out, y)[0].item()
                 # logging.info(l2loss(out, y))
                 # logging.info(h1loss(out, y)[1])
-        test_extra_l2/= dataOpt['dataSize']['test']
-        test_extra_h1/= dataOpt['dataSize']['test']           
+        test_extra_l2/= len(dataOpt['dataSize']['test'])
+        test_extra_h1/= len(dataOpt['dataSize']['test'])         
         
 
         return  test_extra_l2, test_extra_h1
@@ -209,27 +221,29 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
     ############################
     
     train_h1_rec, train_l2_rec, train_f_dist_rec, test_l2_rec, test_h1_rec = [], [], [], [], []
-    if validate:
-        val_l2_rec, val_h1_rec = [], [],
+    val_l2_rec, val_h1_rec = [], [],
     if extrapolate:
         extra_l2_rec, extra_h1_rec = [], [],
-        
+    best_l2, best_test_l2, best_test_h1, arg_min_epoch = 1.0, 1.0, 1.0, 0  
     with tqdm(total=optimizerScheduler_args['epochs'], disable=tqdm_disable) as pbar_ep:
                             
         for epoch in range(optimizerScheduler_args['epochs']):
             desc = f"epoch: [{epoch+1}/{optimizerScheduler_args['epochs']}]"
             lr, train_l2, train_h1, train_f_dist = train(train_loader)
             test_l2, test_h1 = test(test_loader)
-            
-            train_l2_rec.append(train_l2)
-            train_h1_rec.append(train_h1) 
+            val_l2, val_h1 = test(val_loader)
+            if generalization:
+                gel_l2, gel_h1 = test(gel_loader)
+            train_l2_rec.append(train_l2); train_h1_rec.append(train_h1) 
             train_f_dist_rec.append(train_f_dist)
             test_l2_rec.append(test_l2); test_h1_rec.append(test_h1)
-            
-            if validate:
-                val_l2, val_h1 = test(val_loader)
-                val_l2_rec.append(val_l2); val_h1_rec.append(val_h1)
+            val_l2_rec.append(val_l2); val_h1_rec.append(val_h1)
 
+            if val_l2 < best_l2:
+                best_l2 = val_l2
+                arg_min_epoch = epoch
+                best_test_l2 = test_l2
+                best_test_h1 = test_h1
             if extrapolate:
                 test_extra_l2, test_extra_h1 = test_extra(test_extra_loader)
                 extra_l2_rec.append(test_extra_l2); extra_h1_rec.append(test_extra_h1)
@@ -239,16 +253,20 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
             desc += f"| train h1 loss: {train_h1:.3e} "
             desc += f"| test l2 loss: {test_l2:.3e} "
             desc += f"| test h1 loss: {test_h1:.3e} "
-            if validate:
-                desc += f"| val l2 loss: {val_l2:.3e} "
-                desc += f"| val h1 loss: {val_h1:.3e} "
+            desc += f"| val l2 loss: {val_l2:.3e} "
+            desc += f"| val h1 loss: {val_h1:.3e} "
+            if generalization:
+                desc += f"| val l2 loss: {gel_l2:.3e} "
+                desc += f"| val h1 loss: {gel_h1:.3e} "
             if extrapolate:
                 desc += f"| extra l2 loss: {test_extra_l2:.3e} "
                 desc += f"| extra h1 loss: {test_extra_h1:.3e} "
             pbar_ep.set_description(desc)
             pbar_ep.update()
             if log_if:
-                logging.info(desc)           
+                logging.info(desc)  
+        logging.info(f" test h1 loss: {best_test_h1:.3e}, test l2 loss: {best_test_l2:.3e}")
+                 
         if log_if:
             logging.info('train l2 rec:')
             logging.info(train_l2_rec)
@@ -258,11 +276,11 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
             logging.info(test_l2_rec)
             logging.info('test h1 rec:')
             logging.info(test_h1_rec)
-            if validate:
-                logging.info('val l2 rec:')
-                logging.info(val_l2_rec)
-                logging.info('val h1 rec:')
-                logging.info(val_h1_rec)
+            if generalization:
+                logging.info('gel l2 rec:')
+                logging.info(gel_l2_rec)
+                logging.info('gel h1 rec:')
+                logging.info(gel_h1_rec)
             if extrapolate:
                 logging.info('extra l2 rec:')
                 logging.info(extra_l2_rec)
@@ -301,7 +319,7 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
     if model_save:
         torch.save(model, MODEL_PATH_PARA)
         
-    print(f" test h1 loss: {test_h1:.3e}, test l2 loss: {test_l2:.3e}")
+    
             
     return test_l2
 
@@ -455,7 +473,7 @@ tqdm_disable=True, parallel=False, validate=False, checkpoint_dir=None):
     train_h1_rec, train_l2_rec, train_f_dist_rec, test_l2_rec, test_h1_rec = [], [], [], [], []
     if validate:
         val_l2_rec, val_h1_rec = [], [],
-        
+    best_l2, arg_min_epoch = 0.0, 0
     with tqdm(total=optimizerScheduler_args['epochs'], disable=tqdm_disable) as pbar_ep:
                             
         for epoch in range(optimizerScheduler_args['epochs']):
@@ -473,7 +491,9 @@ tqdm_disable=True, parallel=False, validate=False, checkpoint_dir=None):
             if validate:
                 val_l2, val_h1 = test(val_loader)
                 val_l2_rec.append(val_l2); val_h1_rec.append(val_h1)
-                
+                if val_l2 < best_l2 - 0.0001:
+                    best_l2 = val_l2
+                    arg_min_epoch = epoch
             desc += f" | current lr: {lr:.3e}"
             desc += f"| train l2 loss: {train_l2:.3e} "
             desc += f"| train h1 loss: {train_h1:.3e} "
@@ -637,27 +657,6 @@ mlp_hidden_dim=128, num_spectral_layers=4, activation='gelu', add_pos=True, fina
 if __name__ == "__main__":
 
  
-    # dataOpt = {}
-    # dataOpt['data'] = "darcy20c6"
-    # dataOpt['GN'] = False
-    # dataOpt['sampling_rate'] = 1
-    # dataOpt['dataSize'] = {'train': 1280, 'test': 112, 'val':112}
-    # dataOpt['batch_size'] = 8
-
-    # Decoder_paras={  
-    #             "modes": 12,
-    #             "width": 64,
-    #             "padding": 5,
-    #             "mode_threshold": False,
-    #             "kernel_type": 'c',
-    #             "num_spectral_layers": 5,
-    #             "activation": 'gelu',
-    #             "mlp_hidden_dim": 128,
-    #             "init_scale": 16,
-    #             "add_pos": False,
-    #             }
-
-
     # # parser = argparse.ArgumentParser()
     # # parser.add_argument(
     # #         "--optimizer_type", type=str, default="adam", help="optimizer type, adam, adamW, etc"
@@ -731,44 +730,43 @@ if __name__ == "__main__":
     
     
 
-    # optimizerScheduler_args = {
-    #     "optimizer_type": 'adam',
-    #     "lr": 8e-4,
-    #     "weight_decay": 1e-4,        
-    #     "epochs": 100,
-    #     "final_div_factor": 1e1,  
+   
 
-    #     # "dataOpt[loss_type]": 'h1',
-    #     # "show_conv": True,  
-    #     # "tqdm_disable": False,
-    #     # "parallel": False,
-    #     # "validate": False,
-    #     }
-
-
-    # objective(dataOpt, FMM_paras, optimizerScheduler_args, show_conv=True, tqdm_disable=False, model_type='Unet')
     import vFMM_multi
     
     # dataOpt = {}
     # dataOpt['data'] = "a4f1"
-    # dataOpt['GN'] = False
-    # dataOpt['sampling_rate'] = 2
-    # dataOpt['dataSize'] = {'train': 1000, 'test': 100} #, 'val':112
+    # dataOpt['GN'] = True
+    # dataOpt['sampling_rate'] = 4
+    # dataOpt['dataSize'] = {'train': range(1000), 'val': range(100), 'test': range(100)} #, 'val':112
     # dataOpt['batch_size'] = 4
     # dataOpt['sample_x'] = False
     # dataOpt['loss_type']='h1'
+    # dataOpt['loss_weight'] = [2,]
     # dataOpt['normalizer_type'] = 'GN'
     
     # darcy best parameters
     dataOpt = {}
-    dataOpt['data'] = "darcy"
-    dataOpt['GN'] = False
+    dataOpt['data'] = "darcy20c6"
+    dataOpt['GN'] = True
     dataOpt['sampling_rate'] = 2
-    dataOpt['dataSize'] = {'train': 1000, 'test': 100}
-    dataOpt['batch_size'] = 20
+    dataOpt['dataSize'] = {'train': range(1280), 'test': range(112), 'val':range(1280, 1280+112)}
+    dataOpt['batch_size'] = 4
     dataOpt['sample_x'] = False
     dataOpt['loss_type']='h1'
-   
+    dataOpt['loss_weight'] = [2,]
+    dataOpt['normalizer_type'] = 'PGN'
+
+    # dataOpt = {}
+    # dataOpt['data'] = "darcy"
+    # dataOpt['GN'] = False
+    # dataOpt['sampling_rate'] = 2
+    # dataOpt['dataSize'] = {'train': range(1000), 'test': range(100), 'val':range(100, 200)}
+    # dataOpt['batch_size'] = 4
+    # dataOpt['sample_x'] = False
+    # dataOpt['loss_type']='h1'
+    # dataOpt['loss_weight'] = [2,]
+    # dataOpt['normalizer_type'] = 'PGN'
 
     # Decoder_paras={  
     #             "modes": 12,
@@ -785,7 +783,7 @@ if __name__ == "__main__":
 
 # extrapolate 
     Decoder_paras={  
-                "modes": 12,
+                "modes": 16,
                 "width": 64,
                 "lift": False,
                 "padding": 5,
@@ -800,16 +798,16 @@ if __name__ == "__main__":
                 }
 
 
-    # FMM_paras = {    
-    #             'img_size': 512, 'patch_size': 4, 'in_chans':1, 
-    #             'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
-    #             'num_heads':[1, 1, 1],
-    #             'window_size': [4, 4, 4], 'mlp_ratio': 4.,
-    #             'qkv_bias': False, 'qk_scale': None,
-    #             'norm_layer': nn.LayerNorm, 'patch_norm': True,
-    #             'stride': dataOpt['sampling_rate'], 'patch_padding': 1, 
-    #             'Decoder_paras': Decoder_paras,
-    #             }
+    FMM_paras = {    
+                'img_size': 512, 'patch_size': 4, 'in_chans':1, 
+                'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
+                'num_heads':[1, 1, 1],
+                'window_size': [8, 8, 4], 'mlp_ratio': 4.,
+                'qkv':True, 'qkv_bias': False, 'qk_scale': None,
+                'patch_norm': True,
+                'stride': dataOpt['sampling_rate'], 'patch_padding': 1, 
+                'Decoder_paras': Decoder_paras,
+                }
 
     # sampling rate 1
     # FMM_paras = {    
@@ -836,28 +834,21 @@ if __name__ == "__main__":
     #         }
 
     # darcy's
-    FMM_paras = {    
-                'img_size': 421, 'patch_size': 6, 'in_chans':1, 
-                'embed_dim': Decoder_paras['width'], 'depths': [1, 2, 1], 
-                'num_heads':[1, 1, 1],
-                'window_size': [4, 4, 4], 'mlp_ratio': 4.,
-                'qkv_bias': False, 'qk_scale': None,
-                'norm_layer': nn.LayerNorm, 'patch_norm': None,
-                'stride': dataOpt['sampling_rate'], 'patch_padding': 0, 
-                'Decoder_paras': Decoder_paras,
-                }
+    # FMM_paras = {    
+    #             'img_size': 421, 'patch_size': 6, 'in_chans':1, 
+    #             'embed_dim': Decoder_paras['width'], 'depths': [1, 2, 1], 
+    #             'num_heads':[1, 1, 1],
+    #             'window_size': [4, 4, 4], 'mlp_ratio': 4.,
+    #             'qkv_bias': False, 'qk_scale': None,
+    #             'norm_layer': nn.LayerNorm, 'patch_norm': None,
+    #             'stride': dataOpt['sampling_rate'], 'patch_padding': 0, 
+    #             'Decoder_paras': Decoder_paras,
+    #             }
 
 
-    optimizerScheduler_args = {
-            "optimizer_type": 'adam',
-            "lr": 1e-3,
-            "weight_decay": 1e-4,        
-            "epochs": 100,
-            "final_div_factor": 10,  
-            "div_factor": 10,
-            }
+    optimizerScheduler_args = {'optimizer_type': 'adam', 'lr': 8e-4, 'weight_decay': 0.0001, 'epochs': 100, 'final_div_factor': 20, 'div_factor': 4}
     
     
     vFMM_multi.objective(dataOpt, FMM_paras, optimizerScheduler_args, 
-    validate=False, tqdm_disable=True, log_if=True, 
+    validate=True, generalization=False, tqdm_disable=True, log_if=True, 
     model_save=True, show_conv=False, parallel=True, extrapolate=False)

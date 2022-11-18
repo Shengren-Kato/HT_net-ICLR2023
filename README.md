@@ -23,8 +23,8 @@ The data of Multiscale trigonometric coefficient and Helmholtz equation(Appendix
 <br>`mul_tri_train.mat`
 <br>`mul_tri_val.mat`
 <br>`mul_tri_test.mat`
-<br>`Hel_train.mat`
-<br>`Hel_test.mat`
+
+The data of Helmholtz equation(Appendix F) can be downloaded from [here](https://data.caltech.edu/records/fp3ds-kej20)
 
 # Requirements
 The reference [requirements.txt](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/requirements.txt) is under folder [vFMM_ICLR2023](https://github.com/Shengren-Kato/HT_net-ICLR2023/tree/main/vFMM_ICLR2023).
@@ -36,6 +36,6 @@ To verify experiment darcy rough in Section4.2, please fill in the data path of 
 
 Run the [vFMM_multi.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/vFMM_multi.py) to get the result of experimet darcy rough with reslution = 256.
 
-To verigy experiment Multiscale trigonometric coefficient and Helmholtz equation in Appendiex F, please run the [ex_mul_tri.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/ex_mul_tri.py)
+To verify experiment Multiscale trigonometric coefficient and Helmholtz equation in Appendiex F, please run the [ex_mul_tri.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/ex_mul_tri.py)
  and [ex_helmholtz.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/ex_helmholtz.py).
 

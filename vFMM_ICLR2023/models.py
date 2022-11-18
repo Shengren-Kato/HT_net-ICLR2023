@@ -106,17 +106,17 @@ class SpectralConv2d(nn.Module):
         self.modes1 = modes1 #Number of Fourier modes to multiply, at most floor(N/2) + 1
         self.modes2 = modes2
         self.scale = (1 / (in_channels * out_channels))
-        self.fourier_weight1 = nn.Parameter(
-            torch.empty(in_channels, out_channels,
+        self.fourier_weight1 = nn.Parameter(self.scale*
+            torch.rand(in_channels, out_channels,
                                                 modes1, modes2, 2)) 
-        self.fourier_weight2 = nn.Parameter(
-            torch.empty(in_channels, out_channels,
-                                                modes1, modes2, 2)) 
-        
-        nn.init.xavier_uniform_(self.fourier_weight1, gain=1/(in_channels*out_channels)
-                           * np.sqrt((in_channels+out_channels)/init_scale))
-        nn.init.xavier_uniform_(self.fourier_weight2, gain=1/(in_channels*out_channels)
-                           * np.sqrt((in_channels+out_channels)/init_scale))
+        self.fourier_weight2 = nn.Parameter(self.scale*
+            torch.rand(in_channels, out_channels,
+                                                modes1, modes2, 2))                                      
+        if init_scale:
+            nn.init.xavier_uniform_(self.fourier_weight1, gain=1/(in_channels*out_channels)
+                            * np.sqrt((in_channels+out_channels)/init_scale))
+            nn.init.xavier_uniform_(self.fourier_weight2, gain=1/(in_channels*out_channels)
+                            * np.sqrt((in_channels+out_channels)/init_scale))
         
         self.mode_threshold = mode_threshold
         self.shrink = nn.Softshrink()
@@ -148,7 +148,20 @@ class SpectralConv2d(nn.Module):
             x_ft[:, :, -self.modes1:, :self.modes2], self.fourier_weight2)
         out_ft = torch.complex(out_ft[..., 0], out_ft[..., 1])
         
-
+        # Multiply relevant Fourier modes
+#         out_ft = torch.zeros(batch_size, self.out_channels,  x.size(-2), x.size(-1)//2 + 1, dtype=torch.cfloat, device=x.device)
+        
+#         if self.mode_threshold:
+#             # out_ft = waveletShrinkage(out_ft, thr=1e-1, mode='relu') 
+#             out_ft = self.shrink(out_ft)
+#         # the 2d Hermmit symmetric refers to two oppsite directions 
+#         out_ft[:, :, :self.modes1, :self.modes2] = \
+#             self.compl_mul2d(x_ft[:, :, :self.modes1, :self.modes2], self.weights1)
+#         out_ft[:, :, -self.modes1:, :self.modes2] = \
+#             self.compl_mul2d(x_ft[:, :, -self.modes1:, :self.modes2], self.weights2)
+        
+        
+        
 
         #Return to physical space
         if out_resolution:
@@ -165,7 +178,7 @@ class SpectralDecoder(nn.Module):
     def __init__(self, modes=12, width=32, num_spectral_layers=4, mlp_hidden_dim=128, 
                 lift=False, output_dim=1, mlp_LN=False, activation='gelu', mode_threshold=False, 
                 kernel_type='p', padding=9, resolution=None, init_scale=16, 
-                add_pos=True, shortcut=True, normalizer=None):
+                add_pos=False, shortcut=True, normalizer=None):
         super().__init__()
 
         """
@@ -185,40 +198,41 @@ class SpectralDecoder(nn.Module):
         self.modes2 = modes
         self.add_pos = add_pos
         self.shortcut = shortcut    
+        self.resolution = resolution
+        self.padding = padding
         if add_pos:
             self.width = width + 2
         else:
             self.width = width        
         self.num_spectral_layers = num_spectral_layers
         if lift:
+            self.lift = lift
             self.fc0 = nn.Linear(lift, self.width)
-        permute_trans = Lambda(lambda x: torch.permute(x, dims=(0, 3, 1, 2)))
-        
-        # post process
-        permute_trans2 = Lambda(lambda x: torch.permute(x, dims=(0, 2, 3, 1)))
+            
+        self.pre_permute = partial(torch.permute, dims=(0, 3, 1, 2))
+        self.post_permute = partial(torch.permute, dims=(0, 2, 3, 1))
+
         self.mlp = FeedForward(self.width, mlp_hidden_dim, output_dim, LN=mlp_LN)
         if normalizer:
             self.normalizer = normalizer
-        squ = Lambda(lambda x: torch.squeeze(x))
+     
         # pad the domain if input is non-periodic
         if padding:
-            padding_trans = Lambda(lambda x: F.pad(x, [0, padding, 0, padding])) 
-            crop_trans = Lambda(lambda x: x[..., :resolution, :resolution]) 
             if lift:  
-                self.pre_process = transforms.Compose([self.fc0, permute_trans, padding_trans, ])
-            else: self.pre_process = transforms.Compose([permute_trans, padding_trans, ])
+                self.pre_process = transforms.Compose([self.fc0, self.pre_permute, self.padding_trans, ])
+            else: self.pre_process = transforms.Compose([self.pre_permute, self.padding_trans, ])
             if normalizer:
-                self.post_process = transforms.Compose([crop_trans, permute_trans2, self.mlp, squ, self.normalizer.decode])
+                self.post_process = transforms.Compose([self.crop_trans, self.post_permute, self.mlp, torch.squeeze, self.normalizer.decode])
             else:
-                self.post_process = transforms.Compose([crop_trans, permute_trans2, self.mlp, squ])
+                self.post_process = transforms.Compose([self.crop_trans, self.post_permute, self.mlp, torch.squeeze])
         else:
             if lift:  
-                self.pre_process = transforms.Compose([self.fc0, permute_trans])
-            else: self.pre_process = permute_trans
+                self.pre_process = transforms.Compose([self.fc0, self.pre_permute])
+            else: self.pre_process = self.pre_permute
             if normalizer:
-                self.post_process = transforms.Compose([permute_trans2, self.mlp, squ, self.normalizer.decode])
+                self.post_process = transforms.Compose([self.post_permute, self.mlp, torch.squeeze, self.normalizer.decode])
             else:
-                self.post_process = transforms.Compose([permute_trans2, self.mlp, squ])
+                self.post_process = transforms.Compose([self.post_permute, self.mlp, torch.squeeze])
         
         self.Spectral_Conv_List = nn.ModuleList([])      
         for _ in range(num_spectral_layers):
@@ -257,7 +271,9 @@ class SpectralDecoder(nn.Module):
                 x = torch.cat((x, grid), dim=-1)
             else: x = torch.cat((x, self.grid), dim=-1)
 
-
+        # x = x.permute(0, 3, 1, 2)
+        # if self.padding:
+        #     x = F.pad(x, [0,self.padding, 0,self.padding])
         x = self.pre_process(x)
         x1 = self.Spectral_Conv_List[0](x)
         x2 = self.Conv2d_list[0](x)
@@ -280,7 +296,10 @@ class SpectralDecoder(nn.Module):
             else:
                 x = x1 + x2
         x = self.post_process(x)        
-
+        # if self.padding:
+        #     x = x[..., :self.resolution, :self.resolution]
+        # x = x.permute(0, 2, 3, 1)
+        # x = self.mlp(x)
         return x
     
     def get_grid(self, shape, device):
@@ -290,7 +309,11 @@ class SpectralDecoder(nn.Module):
         gridy = torch.tensor(np.linspace(0, 1, size_y), dtype=torch.float)
         gridy = gridy.reshape(1, 1, size_y, 1).repeat([batch_size, size_x, 1, 1])
         return torch.cat((gridx, gridy), dim=-1).to(device)
-    
+
+    def crop_trans(self, x):
+        return x[..., :self.resolution, :self.resolution]
+    def padding_trans(self, x):
+        return  F.pad(x, [0, self.padding, 0, self.padding])
 
 
 
@@ -359,14 +382,15 @@ class WindowAttention(nn.Module):
         proj_drop (float, optional): Dropout ratio of output. Default: 0.0
     """
 
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.):
+    def __init__(self, dim, window_size, num_heads, qkv=False, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.):
 
         super().__init__()
         self.dim = dim
         self.window_size = window_size  # Wh, Ww
         self.num_heads = num_heads
         head_dim = dim // num_heads
-        self.scale = qk_scale or head_dim ** -0.5
+        self.qkv = qkv
+        self.scale = qk_scale or num_heads ** -1
 
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
@@ -384,8 +408,14 @@ class WindowAttention(nn.Module):
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
         self.register_buffer("relative_position_index", relative_position_index)
-
-#         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        if self.qkv:
+            # self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+            self.qlinear = nn.Linear(dim, dim , bias=qkv_bias)
+            nn.init.eye_(self.qlinear.weight)
+            self.klinear = nn.Linear(dim, dim , bias=qkv_bias)
+            nn.init.eye_(self.klinear.weight)
+            self.vlinear = nn.Linear(dim, dim , bias=qkv_bias)
+            nn.init.eye_(self.vlinear.weight)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
@@ -400,12 +430,15 @@ class WindowAttention(nn.Module):
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
         B_, N, C = x.shape
-#         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-#         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
-        
-        x = x.repeat(1,1,3).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-#         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = x[0], x[1], x[2]  # make torchscript happy (cannot use tensor as tuple)
+        if self.qkv:
+            q = self.qlinear(x).reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+            k = self.klinear(x).reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+            v = self.vlinear(x).reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+            # qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+            # q, k, v = qkv[0], qkv[1], qkv[2]   
+        else:
+            x = x.repeat(1,1,3).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+            q, k, v = x[0], x[1], x[2]   
     
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
@@ -447,8 +480,8 @@ class WindowAttention(nn.Module):
         return flops
 
 
-class TransformerBlock(nn.Module):
-    r""" Transformer Block adaptive from Swin.
+class SwinTransformerBlock(nn.Module):
+    r""" Swin Transformer Block.
 
     Args:
         dim (int): Number of input channels.
@@ -467,7 +500,7 @@ class TransformerBlock(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
-                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
+                 mlp_ratio=4., qkv=False, qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm):
         super().__init__()
         self.dim = dim
@@ -485,7 +518,7 @@ class TransformerBlock(nn.Module):
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
             dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
-            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
+            qkv=qkv, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -551,9 +584,9 @@ class TransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
 
         # FFN
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
-
+        # x = shortcut + self.drop_path(x)
+        # x = x + self.drop_path(self.mlp(self.norm2(x)))
+        x += shortcut
         return x
 
     def extra_repr(self) -> str:
@@ -619,7 +652,8 @@ class PatchMerging(nn.Module):
             H, W = self.input_resolution
             B = x.shape[0]
             C = x.shape[-1]
-
+#             print(H, W)
+#             assert H_0 == H // 2, "input feature has wrong size"
             x = self.reconstruction(x)
             x = x.view(B, H//2, W//2, 2*C)
             New_C = C//2
@@ -655,6 +689,8 @@ class PatchUnMerging(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
+#         self.reduction = nn.Linear(dim//4, 1, bias=False)
+#         self.norm = norm_layer(4 * dim)
 
     def forward(self, x):
         """
@@ -673,7 +709,11 @@ class PatchUnMerging(nn.Module):
         x_target[:, 1::2, 0::2, :] = x[..., New_C:2*New_C]  # B H/2 W/2 C
         x_target[:, 0::2, 1::2, :] = x[..., 2*New_C:3*New_C]  # B H/2 W/2 C
         x_target[:, 1::2, 1::2, :] = x[..., 3*New_C:] # B H/2 W/2 C
+#         x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
+#         x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
 
+#         x = self.norm(x)
+#         x = self.reduction(x)
 
         return x_target
 
@@ -708,7 +748,7 @@ class BasicLayer(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 mlp_ratio=4., qkv=False, qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
         super().__init__()
@@ -719,11 +759,11 @@ class BasicLayer(nn.Module):
 
         # build blocks
         self.blocks = nn.ModuleList([
-            TransformerBlock(dim=dim, input_resolution=input_resolution,
+            SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
                                  shift_size=0 if (i % 2 == 0) else window_size // 2,
                                  mlp_ratio=mlp_ratio,
-                                 qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                 qkv=qkv, qkv_bias=qkv_bias, qk_scale=qk_scale,
                                  drop=drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                                  norm_layer=norm_layer)
@@ -920,6 +960,9 @@ class SwinTransformer(nn.Module):
         self.patchUnmerge = PatchUnMerging(dim=int(embed_dim * 2 ** i_layer), input_resolution=(patches_resolution[0] // (2 ** i_layer),
                                                  patches_resolution[1] // (2 ** i_layer)))
         self.norm = norm_layer(self.num_features//4)
+#         self.avgpool = nn.AdaptiveAvgPool1d(1)
+#         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -947,6 +990,10 @@ class SwinTransformer(nn.Module):
 
         for layer in self.layers:
             x = layer(x)
+
+#         x = self.norm(x)  # B L C
+#         x = self.avgpool(x.transpose(1, 2))  # B C 1
+#         x = torch.flatten(x, 1)
         return x
 
     def forward(self, x):
@@ -968,11 +1015,29 @@ class SwinTransformer(nn.Module):
 class FMMTransformer(nn.Module):
     r""" Hierarchical Transformer
 
+    Args:
+        img_size (int | tuple(int)): Input image size. Default 224
+        patch_size (int | tuple(int)): Patch size. Default: 4
+        in_chans (int): Number of input image channels. Default: 3
+        embed_dim (int): Patch embedding dimension. Default: 96
+        depths (tuple(int)): Depth of each Swin Transformer layer.
+        num_heads (tuple(int)): Number of attention heads in different layers.
+        window_size (int): Window size. Default: 7
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4
+        qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: True
+        qk_scale (float): Override default qk scale of head_dim ** -0.5 if set. Default: None
+        drop_rate (float): Dropout rate. Default: 0
+        attn_drop_rate (float): Attention dropout rate. Default: 0
+        drop_path_rate (float): Stochastic depth rate. Default: 0.1
+        norm_layer (nn.Module): Normalization layer. Default: nn.LayerNorm.
+        ape (bool): If True, add absolute position embedding to the patch embedding. Default: False
+        patch_norm (bool): If True, add normalization after patch embedding. Default: True
+        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
     """
 
     def __init__(self, Decoder_paras, img_size=224, patch_size=4, in_chans=3, 
                  embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
-                 window_size=[7, 7, 7, 7], mlp_ratio=4., qkv_bias=True, qk_scale=None,
+                 window_size=[7, 7, 7, 7], mlp_ratio=4., qkv=False, qkv_bias=False, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
                  use_checkpoint=False, stride=2, patch_padding=1, ):
@@ -1014,12 +1079,13 @@ class FMMTransformer(nn.Module):
                                num_heads=num_heads[i_layer],
                                window_size=window_size[i_layer],
                                mlp_ratio=self.mlp_ratio,
-                               qkv_bias=qkv_bias, qk_scale=qk_scale,
+                               qkv=(i_layer==0) and qkv, qkv_bias=qkv_bias, qk_scale=qk_scale,
                                drop=drop_rate, attn_drop=attn_drop_rate,
                                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                                norm_layer=norm_layer,
                                downsample=None,
-                               use_checkpoint=use_checkpoint)
+                               use_checkpoint=use_checkpoint,
+                               )
             self.layers.append(layer)
             
         for i_layer in range(self.num_layers-1):
@@ -1032,7 +1098,6 @@ class FMMTransformer(nn.Module):
                                                  patches_resolution[1] // (2 ** i_layer)))
         # self.norm = norm_layer(self.num_features//4)
         self.norm = norm_layer(self.embed_dim)
-
         self.apply(self._init_weights)
         self.Decoder = SpectralDecoder(**Decoder_paras)
        
@@ -1075,9 +1140,8 @@ class FMMTransformer(nn.Module):
             y0 = self.downsamplers[0](y1, direction='up', uplevel_result1=y0)
         
         x = self.norm(y0)  # B H W C
-        x = torch.squeeze(self.Decoder(x, out_resolution))  # forget why using squeeze 
+        x = self.Decoder(x, out_resolution) # squezze?
    
-     
    
         return x
 
