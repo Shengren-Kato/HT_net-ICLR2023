@@ -36,6 +36,5 @@ To verify experiment darcy rough in Section4.2, please fill in the data path of 
 
 Run the [vFMM_multi.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/vFMM_multi.py) to get the result of experimet darcy rough with reslution = 256.
 
-To verify experiment Multiscale trigonometric coefficient and Helmholtz equation in Appendiex F, please run the [ex_mul_tri.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/ex_mul_tri.py)
- and [ex_helmholtz.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/ex_helmholtz.py).
+
 
