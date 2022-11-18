@@ -19,7 +19,7 @@ In order to run the program properly, please add the data path to utilities3.py/
 
 
 
-The data of Multiscale trigonometric coefficient and Helmholtz equation(Appendix F) can be downloaded from [here](https://drive.google.com/drive/folders/1ovfK0CV6n_UUqt4tAtaxo_-9nRshhZC7?usp=sharing):
+The data of Multiscale trigonometric coefficient can be downloaded from [here](https://drive.google.com/drive/folders/1ovfK0CV6n_UUqt4tAtaxo_-9nRshhZC7?usp=sharing):
 <br>`mul_tri_train.mat`
 <br>`mul_tri_val.mat`
 <br>`mul_tri_test.mat`
