@@ -926,10 +926,10 @@ class qkvPatchMerging(nn.Module):
 
             x = x.view(B, H, W, 3, C//3)
 
-            x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
-            x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
-            x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
-            x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
+            x0 = x[:, 0::2, 0::2, ...]  # B H/2 W/2 C
+            x1 = x[:, 1::2, 0::2, ...]  # B H/2 W/2 C
+            x2 = x[:, 0::2, 1::2, ...]  # B H/2 W/2 C
+            x3 = x[:, 1::2, 1::2, ...]  # B H/2 W/2 C
             x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
             x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
 
