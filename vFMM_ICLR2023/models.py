@@ -271,9 +271,7 @@ class SpectralDecoder(nn.Module):
                 x = torch.cat((x, grid), dim=-1)
             else: x = torch.cat((x, self.grid), dim=-1)
 
-        # x = x.permute(0, 3, 1, 2)
-        # if self.padding:
-        #     x = F.pad(x, [0,self.padding, 0,self.padding])
+
         x = self.pre_process(x)
         x1 = self.Spectral_Conv_List[0](x)
         x2 = self.Conv2d_list[0](x)
@@ -500,7 +498,6 @@ class PlainWindowAttention(nn.Module):
         self.window_size = window_size  # Wh, Ww
         self.num_heads = num_heads
         head_dim = dim // num_heads
-        self.qkv = qkv
         self.scale = qk_scale or num_heads ** -1
 
         # define a parameter table of relative position bias
@@ -519,14 +516,7 @@ class PlainWindowAttention(nn.Module):
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
         self.register_buffer("relative_position_index", relative_position_index)
-        if self.qkv:
-            # self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-            self.qlinear = nn.Linear(dim, dim , bias=qkv_bias)
-            nn.init.eye_(self.qlinear.weight)
-            self.klinear = nn.Linear(dim, dim , bias=qkv_bias)
-            nn.init.eye_(self.klinear.weight)
-            self.vlinear = nn.Linear(dim, dim , bias=qkv_bias)
-            nn.init.eye_(self.vlinear.weight)
+
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
@@ -712,7 +702,7 @@ class SwinTransformerBlock(nn.Module):
         return flops
 
 class HTransformerBlock(nn.Module):
-    r""" Swin Transformer Block.
+    r""" Hierarchical Transformer Block, adapted from Swin
 
     Args:
         dim (int): Number of input channels.
@@ -839,7 +829,7 @@ class HTransformerBlock(nn.Module):
         return flops
 
 class PatchMerging(nn.Module):
-    r""" Patch Merging Layer.
+    r""" Patch Merging Layer. adapted from swin
 
     Args:
         input_resolution (tuple[int]): Resolution of input feature.
@@ -851,11 +841,11 @@ class PatchMerging(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        self.reduction = nn.Linear(4 * dim * 3, 2 * dim * 3, bias=False)
+        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
         self.reconstruction = nn.Linear(2 * dim, 4 * dim, bias=False)
         self.norm = norm_layer(4 * dim)
 
-    def forward(self, x, direction='down', uplevel_result1=None, uplevel_result2=None, flag='x'):
+    def forward(self, x, direction='down', uplevel_result1=None, uplevel_result2=None):
         """
         x: B, H*W, C
         """
@@ -882,8 +872,74 @@ class PatchMerging(nn.Module):
             H, W = self.input_resolution
             B = x.shape[0]
             C = x.shape[-1]
-#             print(H, W)
-#             assert H_0 == H // 2, "input feature has wrong size"
+
+            x = self.reconstruction(x)
+            x = x.view(B, H//2, W//2, 2*C)
+            New_C = C//2
+            x_target = torch.zeros(B, H, W, self.dim, device=x.device)
+
+            x_target[:, 0::2, 0::2, :] = x[...,:New_C] # B H/2 W/2 C
+            x_target[:, 1::2, 0::2, :] = x[...,New_C:2*New_C]  # B H/2 W/2 C
+            x_target[:, 0::2, 1::2, :] = x[...,2*New_C:3*New_C]  # B H/2 W/2 C
+            x_target[:, 1::2, 1::2, :] = x[...,3*New_C:] # B H/2 W/2 C
+            x = x_target + uplevel_result1.view(B, H, W, self.dim) 
+           
+        return x
+
+    def extra_repr(self) -> str:
+        return f"input_resolution={self.input_resolution}, dim={self.dim}"
+
+    def flops(self):
+        H, W = self.input_resolution
+        flops = H * W * self.dim
+        flops += (H // 2) * (W // 2) * 4 * self.dim * 2 * self.dim
+        return flops
+
+class qkvPatchMerging(nn.Module):
+    r""" Patch Merging Layer. adapted from swin
+
+    Args:
+        input_resolution (tuple[int]): Resolution of input feature.
+        dim (int): Number of input channels.
+        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+    """
+
+    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = dim
+        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
+        self.reconstruction = nn.Linear(2 * dim, 4 * dim, bias=False)
+        self.norm = norm_layer(4 * dim)
+
+    def forward(self, x, direction='down', uplevel_result1=None, uplevel_result2=None):
+        """
+        x: B, H*W, C
+        """
+        if direction=='down':
+            
+            H, W = self.input_resolution
+            B, L, C = x.shape
+
+            assert L == H * W, "input feature has wrong size"
+            assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+
+            x = x.view(B, H, W, 3, C//3)
+
+            x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
+            x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
+            x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
+            x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
+            x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
+            x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
+
+            x = self.norm(x)
+            x = self.reduction(x)
+        else:
+            H, W = self.input_resolution
+            B = x.shape[0]
+            C = x.shape[-1]
+
             x = self.reconstruction(x)
             x = x.view(B, H//2, W//2, 2*C)
             New_C = C//2
@@ -919,8 +975,7 @@ class PatchUnMerging(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-#         self.reduction = nn.Linear(dim//4, 1, bias=False)
-#         self.norm = norm_layer(4 * dim)
+
 
     def forward(self, x):
         """
@@ -939,11 +994,6 @@ class PatchUnMerging(nn.Module):
         x_target[:, 1::2, 0::2, :] = x[..., New_C:2*New_C]  # B H/2 W/2 C
         x_target[:, 0::2, 1::2, :] = x[..., 2*New_C:3*New_C]  # B H/2 W/2 C
         x_target[:, 1::2, 1::2, :] = x[..., 3*New_C:] # B H/2 W/2 C
-#         x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
-#         x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
-
-#         x = self.norm(x)
-#         x = self.reduction(x)
 
         return x_target
 
@@ -990,6 +1040,75 @@ class BasicLayer(nn.Module):
         # build blocks
         self.blocks = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                                 num_heads=num_heads, window_size=window_size,
+                                 shift_size=0 if (i % 2 == 0) else window_size // 2,
+                                 mlp_ratio=mlp_ratio,
+                                 qkv=qkv, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                 drop=drop, attn_drop=attn_drop,
+                                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                                 norm_layer=norm_layer)
+            for i in range(depth)])
+
+        # patch merging layer
+        if downsample is not None:
+            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
+        else:
+            self.downsample = None
+
+    def forward(self, x):
+        for blk in self.blocks:
+            if self.use_checkpoint:
+                x = checkpoint.checkpoint(blk, x)
+            else:
+                x = blk(x)
+        if self.downsample is not None:
+            x = self.downsample(x)
+        return x
+
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
+
+    def flops(self):
+        flops = 0
+        for blk in self.blocks:
+            flops += blk.flops()
+        if self.downsample is not None:
+            flops += self.downsample.flops()
+        return flops
+
+class HBasicLayer(nn.Module):
+    """ A basic Hierarchical Transformer layer for one stage.
+
+    Args:
+        dim (int): Number of input channels.
+        input_resolution (tuple[int]): Input resolution.
+        depth (int): Number of blocks.
+        num_heads (int): Number of attention heads.
+        window_size (int): Local window size.
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
+        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set.
+        drop (float, optional): Dropout rate. Default: 0.0
+        attn_drop (float, optional): Attention dropout rate. Default: 0.0
+        drop_path (float | tuple[float], optional): Stochastic depth rate. Default: 0.0
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
+        downsample (nn.Module | None, optional): Downsample layer at the end of the layer. Default: None
+        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
+    """
+
+    def __init__(self, dim, input_resolution, depth, num_heads, window_size,
+                 mlp_ratio=4., qkv=False, qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
+
+        super().__init__()
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.depth = depth
+        self.use_checkpoint = use_checkpoint
+
+        # build blocks
+        self.blocks = nn.ModuleList([
+            HTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
                                  shift_size=0 if (i % 2 == 0) else window_size // 2,
                                  mlp_ratio=mlp_ratio,
@@ -1444,7 +1563,7 @@ class HTransformer(nn.Module):
         self.layers = nn.ModuleList()
         self.downsamplers = nn.ModuleList()
         for i_layer in range(self.num_layers):
-            layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
+            layer = HBasicLayer(dim=int(embed_dim * 2 ** i_layer),
                                input_resolution=(patches_resolution[0] // (2 ** i_layer),
                                                  patches_resolution[1] // (2 ** i_layer)),
                                depth=depths[i_layer],
@@ -1493,7 +1612,7 @@ class HTransformer(nn.Module):
     def forward(self, x, out_resolution=None):
         qkv = self.patch_embed(x)
         if self.ape:
-            x = x + self.absolute_pos_embed
+            qkv = qkv + self.absolute_pos_embed
         qkv = self.pos_drop(qkv)
         y0 = self.layers[0](qkv)
         if self.num_layers==1 :
