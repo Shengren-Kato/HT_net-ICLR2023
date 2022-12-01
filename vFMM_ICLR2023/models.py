@@ -120,11 +120,7 @@ class SpectralConv2d(nn.Module):
         
         self.mode_threshold = mode_threshold
         self.shrink = nn.Softshrink()
-    
-    # Complex multiplication
-    # def compl_mul2d(self, input, weights):
-    #     # (batch, in_channel, x,y ), (in_channel, out_channel, x,y) -> (batch, out_channel, x,y)
-    #     return torch.einsum("bixy,ioxy->boxy", input, weights)
+ 
     @staticmethod
     def complex_matmul_2d(a, b):
         # (batch, in_channel, x, y), (in_channel, out_channel, x, y) -> (batch, out_channel, x, y)
@@ -136,9 +132,8 @@ class SpectralConv2d(nn.Module):
 
     def forward(self, x, out_resolution=None):
         batch_size = x.shape[0]
-        #Compute Fourier coeffcients up to factor of e^(- something constant)
+      
         x_ft = torch.fft.rfft2(x, norm='forward')
-        
         x_ft = torch.stack([x_ft.real, x_ft.imag], dim=-1)
         out_ft = torch.zeros(batch_size, self.out_channels, x.size(-2), x.size(-1)//2 + 1, 2, device=x.device)
 
@@ -147,23 +142,7 @@ class SpectralConv2d(nn.Module):
         out_ft[:, :, -self.modes1:, :self.modes2] = self.complex_matmul_2d(
             x_ft[:, :, -self.modes1:, :self.modes2], self.fourier_weight2)
         out_ft = torch.complex(out_ft[..., 0], out_ft[..., 1])
-        
-        # Multiply relevant Fourier modes
-#         out_ft = torch.zeros(batch_size, self.out_channels,  x.size(-2), x.size(-1)//2 + 1, dtype=torch.cfloat, device=x.device)
-        
-#         if self.mode_threshold:
-#             # out_ft = waveletShrinkage(out_ft, thr=1e-1, mode='relu') 
-#             out_ft = self.shrink(out_ft)
-#         # the 2d Hermmit symmetric refers to two oppsite directions 
-#         out_ft[:, :, :self.modes1, :self.modes2] = \
-#             self.compl_mul2d(x_ft[:, :, :self.modes1, :self.modes2], self.weights1)
-#         out_ft[:, :, -self.modes1:, :self.modes2] = \
-#             self.compl_mul2d(x_ft[:, :, -self.modes1:, :self.modes2], self.weights2)
-        
-        
-        
 
-        #Return to physical space
         if out_resolution:
             p1d = (0, 0, 128, 128)
             out_ft = F.pad(out_ft, p1d, "constant", 0)
@@ -182,14 +161,14 @@ class SpectralDecoder(nn.Module):
         super().__init__()
 
         """
-        The overall network. It contains 4 layers of the Fourier layer.
-        1. Lift the input to the desire channel dimension by self.fc0 .
-        2. 4 layers of the integral operators u' = (W + K)(u).
-            W defined by self.w; K defined by self.conv .
-        3. Project from the channel space to the output space by self.fc1 and self.fc2 .
+        Adapted from FNO
+        The overall network. It contains 4 layers of the SpectralConv2d.
+        1. Lift the input to the desire channel dimension by self.fc0 if needed. Add position if needed.
+        2. 4 layers of the integral operators.
+        3. Project from the channel space to the output space by self.mlp .
         
-        input: the solution of the coefficient function and locations (a(x, y), x, y)
-        input shape: (batchsize, x=s, y=s, c=3)
+        input: the solution of the coefficient function and locations a(x, y)
+        input shape: (batchsize, x=s, y=s, c=1)
         output: the solution 
         output shape: (batchsize, x=s, y=s, c=1)
         """
@@ -271,9 +250,6 @@ class SpectralDecoder(nn.Module):
                 x = torch.cat((x, grid), dim=-1)
             else: x = torch.cat((x, self.grid), dim=-1)
 
-        # x = x.permute(0, 3, 1, 2)
-        # if self.padding:
-        #     x = F.pad(x, [0,self.padding, 0,self.padding])
         x = self.pre_process(x)
         x1 = self.Spectral_Conv_List[0](x)
         x2 = self.Conv2d_list[0](x)
@@ -296,10 +272,7 @@ class SpectralDecoder(nn.Module):
             else:
                 x = x1 + x2
         x = self.post_process(x)        
-        # if self.padding:
-        #     x = x[..., :self.resolution, :self.resolution]
-        # x = x.permute(0, 2, 3, 1)
-        # x = self.mlp(x)
+ 
         return x
     
     def get_grid(self, shape, device):
@@ -434,8 +407,7 @@ class WindowAttention(nn.Module):
             q = self.qlinear(x).reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
             k = self.klinear(x).reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
             v = self.vlinear(x).reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
-            # qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-            # q, k, v = qkv[0], qkv[1], qkv[2]   
+ 
         else:
             x = x.repeat(1,1,3).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
             q, k, v = x[0], x[1], x[2]   
@@ -666,7 +638,7 @@ class PatchMerging(nn.Module):
             H, W = self.input_resolution
             B = x.shape[0]
             C = x.shape[-1]
-#             print(H, W)
+
 #             assert H_0 == H // 2, "input feature has wrong size"
             x = self.reconstruction(x)
             x = x.view(B, H//2, W//2, 2*C)
@@ -703,8 +675,6 @@ class PatchUnMerging(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-#         self.reduction = nn.Linear(dim//4, 1, bias=False)
-#         self.norm = norm_layer(4 * dim)
 
     def forward(self, x):
         """
@@ -723,11 +693,6 @@ class PatchUnMerging(nn.Module):
         x_target[:, 1::2, 0::2, :] = x[..., New_C:2*New_C]  # B H/2 W/2 C
         x_target[:, 0::2, 1::2, :] = x[..., 2*New_C:3*New_C]  # B H/2 W/2 C
         x_target[:, 1::2, 1::2, :] = x[..., 3*New_C:] # B H/2 W/2 C
-#         x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
-#         x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
-
-#         x = self.norm(x)
-#         x = self.reduction(x)
 
         return x_target
 
@@ -1263,8 +1228,7 @@ class SwinTransformer(nn.Module):
         self.patchUnmerge = PatchUnMerging(dim=int(embed_dim * 2 ** i_layer), input_resolution=(patches_resolution[0] // (2 ** i_layer),
                                                  patches_resolution[1] // (2 ** i_layer)))
         self.norm = norm_layer(self.num_features//4)
-#         self.avgpool = nn.AdaptiveAvgPool1d(1)
-#         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+
 
         self.apply(self._init_weights)
 
@@ -1294,14 +1258,10 @@ class SwinTransformer(nn.Module):
         for layer in self.layers:
             x = layer(x)
 
-#         x = self.norm(x)  # B L C
-#         x = self.avgpool(x.transpose(1, 2))  # B C 1
-#         x = torch.flatten(x, 1)
         return x
 
     def forward(self, x):
         x = self.forward_features(x)
-#         x = self.head(x)
         x = self.patchUnmerge(x)
         x = self.norm(x)  # B L C
         return x
