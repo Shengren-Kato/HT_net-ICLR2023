@@ -35,16 +35,16 @@ To verify experiment darcy smooth in Section4.2, please fill in the data path of
 To verify experiment darcy rough in Section4.2, please fill in the data path of <br>`darcy_rough_train.mat`, <br>`darcy_rough_val.mat` ,<br>`darcy_rough_test.mat`and <br>`darcy_alpha2_tau18_c3_512_test.mat` on line 380, 382 and 384 in [utilities3.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/utilities3.py).
 
 Run the [vFMM_multi.py](https://github.com/Shengren-Kato/HT_net-ICLR2023/blob/main/vFMM_ICLR2023/vFMM_multi.py) to get the result of experimet darcy rough with reslution = 256 by
-
->`python vFMM_multi.py  --data 'darcy20c6' --model_type 'HMM'`
-
+```bash
+python vFMM_multi.py  --data 'darcy20c6' --model_type 'HMM'
+```
 
 Reproduce the results of darcy smooth with reslution = 121 by
-
->`python vFMM_multi.py  --data 'darcy' --model_type 'HMM'`
-
+```bash
+python vFMM_multi.py  --data 'darcy' --model_type 'HMM'
+```
 Reproduce the results of trigonometric with reslution = 256 by
-
->`python vFMM_multi.py  --data 'a4f1' --model_type 'HMM'`
-
+```bash
+python vFMM_multi.py  --data 'a4f1' --model_type 'HMM'
+```
 ![comparision](vFMM_ICLR2023/figure/prediction.PNG)
