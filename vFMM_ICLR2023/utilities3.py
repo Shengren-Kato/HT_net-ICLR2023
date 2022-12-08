@@ -110,6 +110,27 @@ def load_from_h5(h5_all_data_path):
 
     return data
 
+
+def merge_params(args, optimizerScheduler_args, FMM_paras, dataOpt, Decoder_paras):
+    """Merge parameters from args and default parameters."""
+    for key in optimizerScheduler_args.keys():
+        if key in args.keys():
+            optimizerScheduler_args[key] = args[key]
+
+        for key in FMM_paras.keys():
+            if key in args.keys():
+                FMM_paras[key] = args[key]
+
+        for key in dataOpt.keys():
+            if key in args.keys():
+                dataOpt[key] = args[key]
+
+        for key in Decoder_paras.keys():
+            if key in args.keys():
+                Decoder_paras[key] = args[key]
+
+    return optimizerScheduler_args, FMM_paras, dataOpt, Decoder_paras
+
 # normalization, pointwise gaussian
 class UnitGaussianNormalizer(nn.Module):
     def __init__(self, x, eps=0.00001):

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 
 from unet_model import UNet
-from models import FMMTransformer, SpectralDecoder
+from models import FMMTransformer, SpectralDecoder, HTransformer
 
 import os, logging, copy
 import numpy as np
@@ -44,7 +44,6 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
                     filename=MODEL_PATH,
                     filemode='w')
     logging.getLogger().addHandler(logging.StreamHandler())
-    logging.info("channel 80 win4 level3")
     logging.info(f"FMM_paras={FMM_paras}")
     logging.info(f"dataOpt={dataOpt}")
     logging.info(f"optimizerScheduler_args={optimizerScheduler_args}")
@@ -59,8 +58,6 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
     
     x_train, y_train, x_normalizer, y_normalizer = getDarcyDataSet(dataOpt, flag='train', return_normalizer=True)
     x_test, y_test = getDarcyDataSet(dataOpt, flag='test', return_normalizer=False, normalizer=x_normalizer)
-    # if validate:
-        # _, VAL_PATH = getPath('darcy20c6_c3')
     x_val, y_val = getDarcyDataSet(dataOpt, flag='val', return_normalizer=False, normalizer=x_normalizer)
     if generalization:
         x_gel, y_gel = getDarcyDataSet(dataOpt, flag='gel', return_normalizer=False, normalizer=x_normalizer)
@@ -72,7 +69,7 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
     
  
 
-    if model_type in ('FMM', 'Unet'):
+    if model_type in ('FMM', 'HMM', 'Unet'):
         x_train = x_train[:, np.newaxis, ...]
         x_test = x_test[:, np.newaxis, ...]
         x_val = x_val[:, np.newaxis, ...]  
@@ -107,6 +104,8 @@ def objective(dataOpt, FMM_paras, optimizerScheduler_args,
     if dataOpt['data'] in ('darcy', 'darcy20', 'darcy20c6', 'darcy15c10', 'darcy20c6_c3', 'helmholtz','a4f1'):
         if model_type == 'FMM':
             model = FMMTransformer(**FMM_paras).to(device)
+        elif model_type == 'HMM':
+            model = HTransformer(**FMM_paras).to(device)
         elif model_type == 'Unet':
             model = UNet(1,1,bilinear=True).to(device)
         elif model_type =='FNO':
@@ -656,134 +655,99 @@ mlp_hidden_dim=128, num_spectral_layers=4, activation='gelu', add_pos=True, fina
 
 if __name__ == "__main__":
 
- 
-    # # parser = argparse.ArgumentParser()
-    # # parser.add_argument(
-    # #         "--optimizer_type", type=str, default="adam", help="optimizer type, adam, adamW, etc"
-    # #                     )
-    # # args = parser.parse_args()
-    # # optimizerScheduler_args = vars(args)
-
-    # # parser = argparse.ArgumentParser()
-    # # parser.add_argument(
-    # #     "--modes", type=int, default=12, help="the number of modes for fno decoder"
-    # # )
-    # # parser.add_argument(
-    # #     "--width", type=int, default=64, help="feature dimension"
-    # # )
-    # # parser.add_argument(
-    # #     "--num_spectral_layers", type=int, default=5, help="number of layers of fno decoder"
-    # # )
-    # # parser.add_argument(
-    # #     "--padding", type=int, default=5, help="padding in fno decoder"
-    # # )
-    # # parser.add_argument(
-    # #     "--kernel_type", type=str, default='c', help="pointwise or convolution in fno decoder"
-    # # )
-    # # parser.add_argument(
-    # #     "--add_pos", type=str, default=False, help="add position in fno decoder or not"
-    # # )
-
-    # if dataOpt['data']=='darcy':
-    #     FMM_paras = {    
-    #                 'img_size': 421, 'patch_size': 4, 'in_chans':1, 
-    #                 'embed_dim': Decoder_paras['width'], 'depths': [1, 2, 1], 
-    #                 'num_heads':[1, 1, 1],
-    #                 'window_size': [9, 4, 4], 'mlp_ratio': 4.,
-    #                 'qkv_bias': False, 'qk_scale': None,
-    #                 'norm_layer': nn.LayerNorm, 'patch_norm': False,
-    #                 'stride': dataOpt['sampling_rate'],
-    #                 'patch_padding': 6, 
-    #                 'Decoder_paras': Decoder_paras,
-    #                  }
-        
-    # elif dataOpt['data'] in ('darcy20', 'darcy20c6', 'darcy15c10', 'darcy20c6_c3'):
-    #     FMM_paras = {    
-    #                 'img_size': 512, 'patch_size': 3, 'in_chans':1, 
-    #                 'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
-    #                 'num_heads':[1, 1, 1],
-    #                 'window_size': [4, 4, 4], 'mlp_ratio': 4.,
-    #                 'qkv_bias': False, 'qk_scale': None,
-    #                 'norm_layer': nn.LayerNorm, 'patch_norm': False,
-    #                 'stride': dataOpt['sampling_rate'],
-    #                 'patch_padding': 1, 
-    #                 'Decoder_paras': Decoder_paras,
-    #                  }
-     
-
-        
-    # else:
-    #     FMM_paras = {    
-    #                 'img_size': 1023, 'patch_size': 4, 'in_chans':1, 
-    #                 'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
-    #                 'num_heads':[1, 1, 1],
-    #                 'window_size': [8, 8, 8], 'mlp_ratio': 4.,
-    #                 'qkv_bias': False, 'qk_scale': None,
-    #                 'norm_layer': nn.LayerNorm, 'patch_norm': False,
-    #                 'stride': dataOpt['sampling_rate'],
-    #                 'patch_padding': 1, 
-    #                 'Decoder_paras': Decoder_paras,
-    #                  }
-      
-
-    
-    
-    
-
-   
-
+    import argparse
     import vFMM_multi
-    
-    # dataOpt = {}
-    # dataOpt['data'] = "a4f1"
-    # dataOpt['GN'] = True
-    # dataOpt['sampling_rate'] = 4
-    # dataOpt['dataSize'] = {'train': range(1000), 'val': range(100), 'test': range(100)} #, 'val':112
-    # dataOpt['batch_size'] = 4
-    # dataOpt['sample_x'] = False
-    # dataOpt['loss_type']='h1'
-    # dataOpt['loss_weight'] = [2,]
-    # dataOpt['normalizer_type'] = 'GN'
-    
-    # darcy best parameters
-    dataOpt = {}
-    dataOpt['data'] = "darcy20c6"
-    dataOpt['GN'] = True
-    dataOpt['sampling_rate'] = 2
-    dataOpt['dataSize'] = {'train': range(1280), 'test': range(112), 'val':range(1280, 1280+112)}
-    dataOpt['batch_size'] = 4
-    dataOpt['sample_x'] = False
-    dataOpt['loss_type']='h1'
-    dataOpt['loss_weight'] = [2,]
-    dataOpt['normalizer_type'] = 'PGN'
 
-    # dataOpt = {}
-    # dataOpt['data'] = "darcy"
-    # dataOpt['GN'] = False
-    # dataOpt['sampling_rate'] = 2
-    # dataOpt['dataSize'] = {'train': range(1000), 'test': range(100), 'val':range(100, 200)}
-    # dataOpt['batch_size'] = 4
-    # dataOpt['sample_x'] = False
-    # dataOpt['loss_type']='h1'
-    # dataOpt['loss_weight'] = [2,]
-    # dataOpt['normalizer_type'] = 'PGN'
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+            "--data", type=str, default="darcy", help="data name, darcy, darcy20, darcy20c6, darcy15c10, darcy20c6_c3"
+    )
+    parser.add_argument(
+            "--model_path", type=str, default="darcy20c6_c3.pth", help="model path"
+    )
+    parser.add_argument(
+            "--batch_size", type=int, default=4, help="batch size"
+    )
+    parser.add_argument(
+            "--learning_rate", type=float, default=1e-4, help="learning rate"
+    )
+    parser.add_argument(
+            "--epochs", type=int, default=100, help="number of epochs"
+    )
+    parser.add_argument(
+            "--sampling_rate", type=int, default=2, help="sampling rate"
+    )
+    parser.add_argument(
+            "--checkpoint_dir", type=str, default=None, help="checkpoint directory"
+    )
+    parser.add_argument(
+            "--normalizer_type", type=str, default="PGN", help="normalizer type, PGN, GN, etc"
+    )
+    parser.add_argument(
+            "--loss_type", type=str, default="h1", help="loss type, l2, h1, etc"
+    )
+    parser.add_argument(
+            "--optimizer_type", type=str, default="adam", help="optimizer type, adam, adamW, etc"
+    )
 
-    # Decoder_paras={  
-    #             "modes": 12,
-    #             "width": 64,
-    #             "padding": 5,
-    #             "mode_threshold": False,
-    #             "kernel_type": 'c',
-    #             "num_spectral_layers": 5,
-    #             "activation": 'gelu',
-    #             "mlp_hidden_dim": 128,
-    #             "init_scale": 16,
-    #             "add_pos": False,
-    #             }
+    # decoder paras
+    parser.add_argument(
+        "--modes", type=int, default=12, help="the number of modes for fno decoder"
+    )
+    parser.add_argument(
+        "--width", type=int, default=64, help="feature dimension"
+    )
+    parser.add_argument(
+        "--num_spectral_layers", type=int, default=5, help="number of layers of decoder"
+    )
+    parser.add_argument(
+        "--padding", type=int, default=5, help="padding in decoder"
+    )
+    parser.add_argument(
+        "--kernel_type", type=str, default='c', help="pointwise or convolution in decoder"
+    )
+    parser.add_argument(
+        "--add_pos", type=str, default=False, help="add position in decoder or not"
+    )
+    parser.add_argument(
+        "--lift", type=str, default=False, help="lift in decoder or not"
+    )
+    parser.add_argument(
+        "--activation", type=str, default='gelu', help="activation in decoder"
+    )
 
-# extrapolate 
+    # FMM, HMM paras
+    parser.add_argument(
+        "--model_type", type=str, default="HMM", help="model type, FMM, HMM, etc"
+    )
+    # parser.add_argument(
+    #     "--window_size", type=list, default=[4, 4, 4], help="window size in FMM"
+    # )
+    # parser.add_argument(
+    #     "--depths", type=list, default=[1, 1, 1], help="depths in FMM"
+    # )
+    # parser.add_argument(
+    #     "--num_heads", type=list, default=[1, 1, 1], help="num_heads in FMM"
+    # )
+    # parser.add_argument(    
+    #     "--patch_size", type=int, default=4, help="patch_size in FMM"
+    # )
+    # parser.add_argument(
+    #     "--in_chans", type=int, default=1, help="in_chans in FMM"
+    # )
+    # parser.add_argument(
+    #     "--patch_padding", type=int, default=1, help="patch_padding in FMM" 
+    # )
+    parser.add_argument(
+        "--qkv",   default=True, action=argparse.BooleanOptionalAction, help="qkv in FMM"
+    )
+
+    args = parser.parse_args()
+    args = vars(args)
+        
+
     Decoder_paras={  
-                "modes": 16,
+                "modes": 12,
                 "width": 64,
                 "lift": False,
                 "padding": 5,
@@ -796,18 +760,85 @@ if __name__ == "__main__":
                 "add_pos": False,
                 "shortcut": True,
                 }
+ 
+
+    if args['data']=='darcy':
+        dataOpt = {}
+        dataOpt['data'] = "darcy"
+        dataOpt['GN'] = False
+        dataOpt['sampling_rate'] = 2
+        dataOpt['dataSize'] = {'train': range(1000), 'test': range(100), 'val':range(100, 200)}
+        dataOpt['batch_size'] = 4
+        dataOpt['sample_x'] = False
+        dataOpt['loss_type']='h1'
+        dataOpt['loss_weight'] = [2,]
+        dataOpt['normalizer_type'] = 'PGN'
+        FMM_paras = {    
+                    'img_size': 421, 'patch_size': 6, 'in_chans':1, 
+                    'embed_dim': Decoder_paras['width'], 'depths': [1, 2, 1], 
+                    'num_heads':[1, 1, 1],
+                    'window_size': [4, 4, 4], 'mlp_ratio': 4.,
+                    'qkv':True, 'qkv_bias': False, 'qk_scale': None,
+                    'patch_norm': False,
+                    'stride': dataOpt['sampling_rate'], 'patch_padding': 0, 
+                    'Decoder_paras': Decoder_paras,
+                     }
+  
+        
+    elif dataOpt['data'] == 'darcy20c6':
+        dataOpt = {}
+        dataOpt['data'] = "darcy20c6"
+        dataOpt['GN'] = True
+        dataOpt['sampling_rate'] = 2
+        dataOpt['dataSize'] = {'train': range(1280), 'test': range(112), 'val':range(1280, 1280+112)}
+        dataOpt['batch_size'] = 4
+        dataOpt['sample_x'] = False
+        dataOpt['loss_type']='h1'
+        dataOpt['loss_weight'] = [2,]
+        dataOpt['normalizer_type'] = 'PGN'
+        FMM_paras = {    
+                    'img_size': 512, 'patch_size': 4, 'in_chans':1, 
+                    'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
+                    'num_heads':[1, 1, 1],
+                    'window_size': [8, 8, 4], 'mlp_ratio': 4.,
+                    'qkv':True, 'qkv_bias': False, 'qk_scale': None,
+                    'patch_norm': True,
+                    'stride': dataOpt['sampling_rate'], 'patch_padding': 1, 
+                    'Decoder_paras': Decoder_paras,
+                    }
 
 
-    FMM_paras = {    
-                'img_size': 512, 'patch_size': 4, 'in_chans':1, 
-                'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
-                'num_heads':[1, 1, 1],
-                'window_size': [8, 8, 4], 'mlp_ratio': 4.,
-                'qkv':True, 'qkv_bias': False, 'qk_scale': None,
-                'patch_norm': True,
-                'stride': dataOpt['sampling_rate'], 'patch_padding': 1, 
-                'Decoder_paras': Decoder_paras,
-                }
+    elif dataOpt['data'] == 'a4f1':
+        dataOpt = {}
+        dataOpt['data'] = "a4f1"
+        dataOpt['GN'] = True
+        dataOpt['sampling_rate'] = 4
+        dataOpt['dataSize'] = {'train': range(1000), 'val': range(100), 'test': range(100)} #, 'val':112
+        dataOpt['batch_size'] = 4
+        dataOpt['sample_x'] = False
+        dataOpt['loss_type']='h1'
+        dataOpt['loss_weight'] = [2,]
+        dataOpt['normalizer_type'] = 'GN'
+        FMM_paras = {    
+                    'img_size': 1023, 'patch_size': 4, 'in_chans':1, 
+                    'embed_dim': Decoder_paras['width'], 'depths': [1, 1, 1], 
+                    'num_heads':[1, 1, 1],
+                    'window_size': [8, 8, 8], 'mlp_ratio': 4.,
+                    'qkv':True, 'qkv_bias': False, 'qk_scale': None,
+                    'patch_norm': False,
+                    'stride': dataOpt['sampling_rate'], 'patch_padding': 1, 
+                    'Decoder_paras': Decoder_paras,
+                     }
+       
+    optimizerScheduler_args = {'optimizer_type': 'adam', 'lr': 8e-4, 'weight_decay': 0.0001, 'epochs': 100, 'final_div_factor': 20, 'div_factor': 4}
+
+    optimizerScheduler_args, FMM_paras, dataOpt, Decoder_paras = merge_params(args, optimizerScheduler_args, FMM_paras, dataOpt, Decoder_paras)
+    
+    vFMM_multi.objective(dataOpt, FMM_paras, optimizerScheduler_args, model_type=args['model_type'],
+    validate=True, generalization=False, tqdm_disable=True, log_if=True, 
+    model_save=True, show_conv=False, parallel=True, extrapolate=False)
+
+
 
     # sampling rate 1
     # FMM_paras = {    
@@ -846,9 +877,4 @@ if __name__ == "__main__":
     #             }
 
 
-    optimizerScheduler_args = {'optimizer_type': 'adam', 'lr': 8e-4, 'weight_decay': 0.0001, 'epochs': 100, 'final_div_factor': 20, 'div_factor': 4}
     
-    
-    vFMM_multi.objective(dataOpt, FMM_paras, optimizerScheduler_args, 
-    validate=True, generalization=False, tqdm_disable=True, log_if=True, 
-    model_save=True, show_conv=False, parallel=True, extrapolate=False)
